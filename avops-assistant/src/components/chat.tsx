@@ -84,6 +84,41 @@ export function Chat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, status]);
 
+  // A conversation can be mid-answer with no local stream attached — the
+  // user sent a prompt, closed the tab or switched conversations, and came
+  // back (generation continues server-side via consumeStream). While the
+  // last message is ours and nothing is streaming here, poll until the
+  // persisted answer lands.
+  const awaitingAnswer =
+    !busy && messages.length > 0 && messages[messages.length - 1].role === "user";
+
+  useEffect(() => {
+    if (!awaitingAnswer || !convIdRef.current) return;
+    const id = convIdRef.current;
+    let stopped = false;
+
+    const poll = () => {
+      fetch(`/api/conversations/${id}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { messages: DbMessage[] } | null) => {
+          if (stopped || !data) return;
+          const last = data.messages[data.messages.length - 1];
+          if (last?.role === "assistant") setMessages(toUIMessages(data.messages));
+        })
+        .catch(() => {
+          // transient; next tick retries
+        });
+    };
+    const interval = setInterval(poll, 3000);
+    // Answers can take a while with tool loops, but don't poll forever.
+    const timeout = setTimeout(() => clearInterval(interval), 5 * 60_000);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [awaitingAnswer, setMessages]);
+
   async function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
@@ -153,8 +188,10 @@ export function Chat({
               {messages.map((message) => (
                 <MessageItem key={message.id} message={message} compact={compact} />
               ))}
-              {status === "submitted" && (
-                <p className="soft-pulse text-sm text-text-3">Thinking…</p>
+              {(status === "submitted" || awaitingAnswer) && (
+                <p className="soft-pulse text-sm text-text-3">
+                  {awaitingAnswer ? "Answering…" : "Thinking…"}
+                </p>
               )}
             </div>
           )}

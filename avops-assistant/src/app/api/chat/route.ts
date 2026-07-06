@@ -159,6 +159,14 @@ export async function POST(req: Request) {
       },
     });
 
+    // Keep generating even if the browser disconnects (tab closed, user
+    // switched conversations): drains a teed copy of the stream so onFinish
+    // always runs and the answer is persisted. The client picks it up from
+    // the DB when the conversation is reopened.
+    void result.consumeStream({
+      onError: (error) => console.error("[chat] background consume error:", error),
+    });
+
     return result.toUIMessageStreamResponse({
       // Stream web citations to the client as source parts.
       sendSources: true,
