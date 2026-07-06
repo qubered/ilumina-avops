@@ -1,0 +1,17 @@
+# secrets & local-only config — never commit
+avops-assistant/.env
+avops-assistant/docker/dev-outline-secrets.env
+avops-assistant/docker/orbstack-root-ca.pem
+
+# dependencies & build output
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# misc
+.DS_Store
+npm-debug.log*
+
+# local machine config
+.claude/
