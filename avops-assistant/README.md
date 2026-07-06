@@ -28,6 +28,8 @@ avops-assistant/          this app
 
 ## Local development
 
+> Setting up on a fresh machine? Follow **[DEV_SETUP.md](DEV_SETUP.md)** — the step-by-step including the optional local Outline + SSO environment.
+
 ```bash
 cd avops-assistant
 cp .env.example .env               # fill it in (see below)
