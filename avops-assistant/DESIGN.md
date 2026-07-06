@@ -58,12 +58,20 @@ Shadows (verbatim from Outline):
 
 ## 2. Typography
 
-One family, weight does the work. No display face — Outline's identity is
-the *absence* of typographic theatre.
+Two voices with a hard boundary: ILUMINA's brand face for display, Outline's
+stack for everything functional.
 
-- **Family**: `-apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Oxygen, sans-serif` (Outline's stack, verbatim)
+- **Brand face**: **Poppins Extra Light (200) + Extra Light Italic** —
+  ILUMINA's identity. Display only: the wordmark, page titles, empty-state
+  heading, auth headings, and taglines (italic). **Never below 16px and never
+  for body, UI controls, or labels** — at 200 weight it stops being legible
+  where Outline's chrome needs to work. Self-hosted via `next/font`
+  (`--font-brand`).
+- **Wordmark**: `ILUMINA` upright + `AV Ops` italic, 0.04em tracking — the
+  brand's two Poppins styles in one lockup.
+- **UI family**: `-apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Oxygen, sans-serif` (Outline's stack, verbatim)
 - **Mono**: `"SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace`
-- **Weights**: 400 regular · 500 medium · 600 bold. Nothing heavier.
+- **UI weights**: 400 regular · 500 medium · 600 bold. Nothing heavier.
 - **Scale**:
   - UI base **15px / 1.6** (Outline's app chrome)
   - Message & document content **16px / 1.6** (Outline's editor body)

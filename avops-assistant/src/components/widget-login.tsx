@@ -34,11 +34,13 @@ export function WidgetLogin({ appUrl }: { appUrl: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-canvas px-6">
       <div className="text-center">
-        <span className="mx-auto mb-2 flex size-8 items-center justify-center rounded-md bg-accent text-sm font-semibold text-accent-fg">
+        <span className="mx-auto mb-2 flex size-8 items-center justify-center rounded-md bg-accent font-brand text-base font-extralight text-accent-fg">
           I
         </span>
-        <p className="text-sm font-medium text-text">Login to AV Ops</p>
-        <p className="text-[13px] text-text-2">Ask the crew knowledge base</p>
+        <p className="font-brand text-lg font-extralight text-text">
+          ILUMINA <span className="italic">AV Ops</span>
+        </p>
+        <p className="text-[13px] text-text-2">Sign in to ask the crew knowledge base</p>
       </div>
       <form onSubmit={handleSubmit} className="w-full max-w-[240px] space-y-2">
         <input

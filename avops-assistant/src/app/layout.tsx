@@ -1,5 +1,16 @@
 import type { Metadata } from "next";
+import { Poppins } from "next/font/google";
 import "./globals.css";
+
+// ILUMINA's brand face — display use only (wordmark, titles), never body.
+// Self-hosted by next/font at build time; no runtime Google requests.
+const poppins = Poppins({
+  weight: "200",
+  style: ["normal", "italic"],
+  subsets: ["latin"],
+  variable: "--font-poppins",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "ILUMINA AV Ops",
@@ -18,7 +29,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="h-full">
+    <html lang="en" suppressHydrationWarning className={`h-full ${poppins.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

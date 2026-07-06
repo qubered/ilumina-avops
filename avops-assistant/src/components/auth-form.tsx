@@ -80,14 +80,14 @@ export function AuthForm({
     <div className="flex min-h-full items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-xs">
         <div className="mb-8 text-center">
-          <span className="mx-auto mb-3 flex size-9 items-center justify-center rounded-md bg-accent text-[15px] font-semibold text-accent-fg">
+          <span className="mx-auto mb-3 flex size-9 items-center justify-center rounded-md bg-accent font-brand text-[17px] font-extralight text-accent-fg">
             I
           </span>
-          <h1 className="text-2xl font-semibold text-text">
-            {mode === "login" ? "Login to AV Ops" : "Create your account"}
+          <h1 className="font-brand text-[26px] font-extralight text-text">
+            {mode === "login" ? "Login to ILUMINA AV Ops" : "Create your account"}
           </h1>
-          <p className="mt-1 text-sm text-text-2">
-            The ILUMINA crew knowledge assistant
+          <p className="mt-1 font-brand text-base font-extralight italic text-text-2">
+            The crew knowledge assistant
           </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3">

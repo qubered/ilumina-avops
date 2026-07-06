@@ -124,7 +124,7 @@ export function Chat({
         >
           {showStarters ? (
             <div className={compact ? "pt-3" : "pt-20"}>
-              <h1 className={`font-semibold text-text ${compact ? "text-base" : "text-2xl"}`}>
+              <h1 className={`font-brand font-extralight text-text ${compact ? "text-lg" : "text-[28px]"}`}>
                 Ask the AV Ops knowledge base
               </h1>
               <p className="mt-1 text-[15px] text-text-2">
