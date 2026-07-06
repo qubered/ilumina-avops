@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
-import { Poppins } from "next/font/google";
+import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
-// ILUMINA's brand face — display use only (wordmark, titles), never body.
+// Heading face — geometric like the ILUMINA brand's Poppins, but with the
+// weight to carry titles. Display use only (wordmark, headings), never body.
 // Self-hosted by next/font at build time; no runtime Google requests.
-const poppins = Poppins({
-  weight: "200",
-  style: ["normal", "italic"],
+const spaceGrotesk = Space_Grotesk({
+  weight: ["500", "600", "700"],
   subsets: ["latin"],
-  variable: "--font-poppins",
+  variable: "--font-space-grotesk",
   display: "swap",
 });
 
@@ -29,7 +29,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`h-full ${poppins.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`h-full ${spaceGrotesk.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

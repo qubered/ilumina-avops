@@ -135,8 +135,8 @@
     Oxygen, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier,
     monospace;
-  /* ILUMINA brand face (Poppins Extra Light) — display only, ≥16px */
-  --font-brand: var(--font-poppins), var(--font-sans);
+  /* Heading face (Space Grotesk) — display only: wordmark and titles */
+  --font-brand: var(--font-space-grotesk), var(--font-sans);
 }
 
 html,

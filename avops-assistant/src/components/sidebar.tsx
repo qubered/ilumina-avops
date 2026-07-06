@@ -71,9 +71,9 @@ export function Sidebar({
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <Link
           href="/"
-          className="rounded font-brand text-[17px] font-extralight tracking-[0.04em] text-text"
+          className="rounded font-brand text-[16px] font-semibold text-text"
         >
-          ILUMINA <span className="italic">AV Ops</span>
+          ILUMINA AV Ops
         </Link>
         <a
           href={outlineUrl}

@@ -61,14 +61,13 @@ Shadows (verbatim from Outline):
 Two voices with a hard boundary: ILUMINA's brand face for display, Outline's
 stack for everything functional.
 
-- **Brand face**: **Poppins Extra Light (200) + Extra Light Italic** —
-  ILUMINA's identity. Display only: the wordmark, page titles, empty-state
-  heading, auth headings, and taglines (italic). **Never below 16px and never
-  for body, UI controls, or labels** — at 200 weight it stops being legible
-  where Outline's chrome needs to work. Self-hosted via `next/font`
-  (`--font-brand`).
-- **Wordmark**: `ILUMINA` upright + `AV Ops` italic, 0.04em tracking — the
-  brand's two Poppins styles in one lockup.
+- **Heading face**: **Space Grotesk 600** — geometric kin to ILUMINA's
+  Poppins brand face, with the weight to carry titles (Poppins Extra Light
+  was reviewed in-app and rejected as a heading face: too wispy at display
+  sizes; no italics anywhere). Display only: the wordmark, page titles, and
+  the empty-state heading. **Never for body, UI controls, or labels.**
+  Self-hosted via `next/font` (`--font-brand`).
+- **Wordmark**: `ILUMINA AV Ops`, Space Grotesk 600, no tracking tricks.
 - **UI family**: `-apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Oxygen, sans-serif` (Outline's stack, verbatim)
 - **Mono**: `"SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace`
 - **UI weights**: 400 regular · 500 medium · 600 bold. Nothing heavier.

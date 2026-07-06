@@ -72,7 +72,7 @@ export default async function AdminPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[52rem] px-8 py-10">
-        <h1 className="font-brand text-[26px] font-extralight text-text">Admin</h1>
+        <h1 className="font-brand text-2xl font-semibold text-text">Admin</h1>
 
         {/* KB sync status */}
         <section className="mt-8">
