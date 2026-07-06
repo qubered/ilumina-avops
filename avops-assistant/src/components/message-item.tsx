@@ -116,6 +116,17 @@ export function MessageItem({
             remarkPlugins={[remarkGfm]}
             components={{
               a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+              // Inline images only from the app's own KB-attachment proxy;
+              // anything external degrades to a link (no third-party loads).
+              img: ({ src, alt }) =>
+                typeof src === "string" && src.startsWith("/api/kb/attachment") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src} alt={alt ?? ""} loading="lazy" />
+                ) : src ? (
+                  <a href={String(src)} target="_blank" rel="noreferrer">
+                    {alt || String(src)}
+                  </a>
+                ) : null,
             }}
           >
             {body}

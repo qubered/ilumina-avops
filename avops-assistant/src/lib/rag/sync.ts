@@ -9,6 +9,7 @@ import {
   shouldIndexDocument,
   type OutlineDocument,
 } from "../outline";
+import { rewriteAttachmentUrls } from "./attachments";
 import { chunkMarkdown } from "./chunker";
 import { embedBatch } from "./embeddings";
 import { parseMetadataBlock } from "./metadata";
@@ -31,7 +32,9 @@ export async function syncDocument(
   const url = documentUrl(doc);
   try {
     const { metadata, body } = parseMetadataBlock(doc.text);
-    const chunks = chunkMarkdown(doc.title, body);
+    // Attachment URLs become app-proxy URLs so quoted images/files render
+    // for signed-in crew (see lib/rag/attachments.ts).
+    const chunks = chunkMarkdown(doc.title, rewriteAttachmentUrls(body));
     const vectors = await embedBatch(
       chunks.map((c) => c.text),
       "document",
