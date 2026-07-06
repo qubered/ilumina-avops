@@ -43,6 +43,25 @@ function isPersisted(message: UIMessage): boolean {
   return Boolean((message.metadata as { persisted?: boolean } | undefined)?.persisted);
 }
 
+/**
+ * The system prompt makes the model end with a "Sources:" list; the same
+ * citations render as structured document rows below. Strip the redundant
+ * trailing text list — presentation only, the stored message is untouched.
+ */
+function stripTrailingSourcesList(text: string): string {
+  return text.replace(/\n+(?:#{1,4}\s*)?(?:\*\*)?Sources:?(?:\*\*)?\s*\n(?:\s*(?:[-*•]|\d+\.)\s+.*\n?)*\s*$/i, "");
+}
+
+/** Outline's document glyph — citations render as document-list rows. */
+function DocIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6M9 13h6M9 17h4" />
+    </svg>
+  );
+}
+
 export function MessageItem({
   message,
   compact,
@@ -54,9 +73,9 @@ export function MessageItem({
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="message-in flex justify-end">
         <div
-          className={`max-w-[85%] rounded-lg bg-sidebar px-3.5 py-2 whitespace-pre-wrap text-fg ${compact ? "text-sm" : ""}`}
+          className={`max-w-[75%] rounded-lg bg-canvas-2 px-3 py-1.5 whitespace-pre-wrap text-text ${compact ? "text-sm" : "text-[15px]"}`}
         >
           {text}
         </div>
@@ -66,42 +85,48 @@ export function MessageItem({
 
   const sources = sourcesOf(message);
   const searching = isSearching(message);
+  const body = sources.length > 0 ? stripTrailingSourcesList(text) : text;
 
   return (
-    <div className={compact ? "text-sm" : ""}>
+    <div className={`message-in ${compact ? "text-sm" : ""}`}>
       {searching && !text && (
-        <p className="animate-pulse text-sm text-muted">Searching the knowledge base…</p>
+        <p className="soft-pulse text-sm text-text-3">Searching the knowledge base…</p>
       )}
-      {text && (
-        <div className="message-content">
+      {body && (
+        <div className="message-content" style={compact ? { fontSize: "14px" } : undefined}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
             }}
           >
-            {text}
+            {body}
           </ReactMarkdown>
         </div>
       )}
       {sources.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium text-faint">Sources</span>
-          {sources.map((source) => (
-            <a
-              key={source.url}
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-full border border-edge bg-sidebar px-2.5 py-0.5 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" />
-                <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
-              </svg>
-              {source.title}
-            </a>
-          ))}
+        <div className="mt-3">
+          <p className="mb-0.5 px-2 text-[13px] font-medium text-text-3">Sources</p>
+          <ul>
+            {sources.map((source) => (
+              <li key={source.url}>
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group flex h-8 items-center gap-2 rounded px-2 text-[15px] text-text-2 transition-colors duration-100 hover:bg-canvas-2 hover:text-text"
+                >
+                  <span className="text-text-3">
+                    <DocIcon />
+                  </span>
+                  <span className="truncate">{source.title}</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ml-auto shrink-0 text-text-3 opacity-0 transition-opacity duration-100 group-hover:opacity-100">
+                    <path d="M7 17 17 7M7 7h10v10" />
+                  </svg>
+                </a>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {text && isPersisted(message) && <FeedbackButtons messageId={message.id} />}

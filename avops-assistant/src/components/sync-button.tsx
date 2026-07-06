@@ -20,7 +20,7 @@ export function SyncButton() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setState("running");
-      setMessage("Sync started — refresh to see progress.");
+      setMessage("Sync started");
       // Refresh the page data a few times while the sync runs.
       let ticks = 0;
       const interval = setInterval(() => {
@@ -38,19 +38,19 @@ export function SyncButton() {
 
   return (
     <div className="flex items-center gap-3">
+      {message && (
+        <span className={`text-[13px] ${state === "error" ? "text-danger" : "text-text-3"}`}>
+          {message}
+        </span>
+      )}
       <button
         type="button"
         onClick={trigger}
         disabled={state === "starting" || state === "running"}
-        className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-60"
+        className="h-8 rounded bg-accent px-3 text-sm font-medium text-accent-fg transition-colors duration-100 hover:bg-accent-hover disabled:opacity-50"
       >
         {state === "running" ? "Syncing…" : "Re-sync now"}
       </button>
-      {message && (
-        <span className={`text-sm ${state === "error" ? "text-danger" : "text-muted"}`}>
-          {message}
-        </span>
-      )}
     </div>
   );
 }

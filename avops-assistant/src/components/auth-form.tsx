@@ -6,11 +6,13 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 const inputClass =
-  "w-full rounded-md border border-edge bg-bg px-3 py-2 text-fg placeholder-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20";
+  "h-9 w-full rounded border border-input-border bg-input px-3 text-[15px] text-text outline-none transition-colors duration-100 focus:border-input-focus";
+const labelClass = "mb-1 block text-sm font-medium text-text-2";
 
 /**
- * Shared login/register form. On login, if the request arrived from an OIDC
- * authorize redirect (Outline SSO), better-auth resumes that flow
+ * Shared login/register form, set like Outline's login: a quiet centered
+ * column on the canvas, no card. On login, if the request arrived from an
+ * OIDC authorize redirect (Outline SSO), better-auth resumes that flow
  * automatically after sign-in.
  */
 export function AuthForm({
@@ -75,23 +77,23 @@ export function AuthForm({
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-sidebar px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 text-center">
-          <div className="text-xs font-semibold tracking-widest text-muted">
-            ILUMINA AV OPS
-          </div>
-          <h1 className="mt-1 text-xl font-semibold text-fg">
-            {mode === "login" ? "Sign in" : "Create your account"}
+    <div className="flex min-h-full items-center justify-center bg-canvas px-4">
+      <div className="w-full max-w-xs">
+        <div className="mb-8 text-center">
+          <span className="mx-auto mb-3 flex size-9 items-center justify-center rounded-md bg-accent text-[15px] font-semibold text-accent-fg">
+            I
+          </span>
+          <h1 className="text-2xl font-semibold text-text">
+            {mode === "login" ? "Login to AV Ops" : "Create your account"}
           </h1>
+          <p className="mt-1 text-sm text-text-2">
+            The ILUMINA crew knowledge assistant
+          </p>
         </div>
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-3 rounded-lg border border-edge bg-bg p-6 shadow-sm"
-        >
+        <form onSubmit={handleSubmit} className="space-y-3">
           {mode === "register" && (
             <div>
-              <label htmlFor="name" className="mb-1 block text-sm font-medium">
+              <label htmlFor="name" className={labelClass}>
                 Name
               </label>
               <input
@@ -105,7 +107,7 @@ export function AuthForm({
             </div>
           )}
           <div>
-            <label htmlFor="email" className="mb-1 block text-sm font-medium">
+            <label htmlFor="email" className={labelClass}>
               Email
             </label>
             <input
@@ -119,7 +121,7 @@ export function AuthForm({
             />
           </div>
           <div>
-            <label htmlFor="password" className="mb-1 block text-sm font-medium">
+            <label htmlFor="password" className={labelClass}>
               Password
             </label>
             <input
@@ -135,7 +137,7 @@ export function AuthForm({
           </div>
           {mode === "register" && requiresSignupKey && (
             <div>
-              <label htmlFor="signupKey" className="mb-1 block text-sm font-medium">
+              <label htmlFor="signupKey" className={labelClass}>
                 Signup key
               </label>
               <input
@@ -154,23 +156,23 @@ export function AuthForm({
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-md bg-accent px-3 py-2 font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-60"
+            className="h-9 w-full rounded bg-accent text-sm font-medium text-accent-fg transition-colors duration-100 hover:bg-accent-hover disabled:opacity-50"
           >
-            {busy ? "Working..." : mode === "login" ? "Sign in" : "Create account"}
+            {busy ? "Working…" : mode === "login" ? "Continue" : "Create account"}
           </button>
         </form>
-        <p className="mt-4 text-center text-sm text-muted">
+        <p className="mt-6 text-center text-sm text-text-2">
           {mode === "login" ? (
             <>
               No account?{" "}
-              <Link href={otherHref} className="text-accent hover:underline">
+              <Link href={otherHref} className="text-link hover:underline">
                 Register
               </Link>
             </>
           ) : (
             <>
               Already registered?{" "}
-              <Link href={otherHref} className="text-accent hover:underline">
+              <Link href={otherHref} className="text-link hover:underline">
                 Sign in
               </Link>
             </>

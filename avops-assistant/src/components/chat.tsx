@@ -120,43 +120,48 @@ export function Chat({
     <div className="flex h-full min-h-0 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div
-          className={`mx-auto w-full ${compact ? "px-3 py-3" : "max-w-[46rem] px-6 py-8"}`}
+          className={`mx-auto w-full ${compact ? "px-3 py-3" : "max-w-[46rem] px-8 py-8"}`}
         >
           {showStarters ? (
-            <div className={compact ? "pt-4" : "pt-16"}>
-              <h2 className={`font-semibold text-fg ${compact ? "text-base" : "text-xl"}`}>
+            <div className={compact ? "pt-3" : "pt-20"}>
+              <h1 className={`font-semibold text-text ${compact ? "text-base" : "text-2xl"}`}>
                 Ask the AV Ops knowledge base
-              </h2>
-              <p className="mt-1 text-sm text-muted">
+              </h1>
+              <p className="mt-1 text-[15px] text-text-2">
                 Answers come from the crew wiki, with links to the source pages.
               </p>
-              <div className="mt-5 flex flex-col items-start gap-2">
+              <ul className="mt-6">
                 {STARTER_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => submit(q)}
-                    className="rounded-lg border border-edge bg-bg px-3 py-2 text-left text-sm text-fg shadow-sm transition-colors hover:border-accent hover:text-accent"
-                  >
-                    {q}
-                  </button>
+                  <li key={q}>
+                    <button
+                      type="button"
+                      onClick={() => submit(q)}
+                      className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-[15px] text-text-2 transition-colors duration-100 hover:bg-canvas-2 hover:text-text"
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-3">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.3-4.3" />
+                      </svg>
+                      {q}
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-7">
               {messages.map((message) => (
                 <MessageItem key={message.id} message={message} compact={compact} />
               ))}
               {status === "submitted" && (
-                <p className="animate-pulse text-sm text-muted">Thinking…</p>
+                <p className="soft-pulse text-sm text-text-3">Thinking…</p>
               )}
             </div>
           )}
           {(error || creationError) && (
             <div className="mt-4 rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger">
               {creationError ??
-                "The assistant hit an error. Check that the AI backend is reachable, then try again."}
+                "The AI backend is unreachable. Try again shortly."}
               {error && (
                 <button
                   type="button"
@@ -187,7 +192,7 @@ function Composer({
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // `/` focuses the composer from anywhere (brief §8).
+  // `/` focuses the composer from anywhere (DESIGN.md §7).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (
@@ -210,17 +215,17 @@ function Composer({
   }
 
   return (
-    <div className={`border-t border-edge bg-bg ${compact ? "p-2" : "p-4"}`}>
+    <div className={compact ? "p-2" : "px-8 pb-6"}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           send();
         }}
-        className={`mx-auto flex w-full items-end gap-2 ${compact ? "" : "max-w-[46rem]"}`}
+        className={`mx-auto flex w-full items-end gap-2 rounded-md border border-input-border bg-input px-3 py-2 transition-colors duration-100 focus-within:border-input-focus ${compact ? "" : "max-w-[46rem]"}`}
       >
         <textarea
           ref={textareaRef}
-          rows={compact ? 1 : 2}
+          rows={1}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
@@ -229,20 +234,26 @@ function Composer({
               send();
             }
           }}
-          placeholder="Ask about AV ops… (Enter to send, / to focus)"
-          className="max-h-40 flex-1 resize-none rounded-lg border border-edge bg-bg px-3 py-2 text-[15px] text-fg placeholder-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          placeholder="Ask about AV ops…"
+          className="max-h-40 min-h-6 flex-1 resize-none bg-transparent text-[15px] text-text outline-none"
+          style={{ fieldSizing: "content" } as React.CSSProperties}
         />
         <button
           type="submit"
           disabled={busy || !value.trim()}
-          className="rounded-lg bg-accent px-3.5 py-2 font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-50"
+          className="flex size-7 shrink-0 items-center justify-center rounded bg-accent text-accent-fg transition-colors duration-100 hover:bg-accent-hover disabled:opacity-40"
           title="Send"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 12 7-7 7 7M12 19V5" />
           </svg>
         </button>
       </form>
+      {!compact && (
+        <p className="mx-auto mt-1.5 max-w-[46rem] px-1 text-xs text-text-3">
+          Enter to send · Shift+Enter for a new line · / to focus
+        </p>
+      )}
     </div>
   );
 }

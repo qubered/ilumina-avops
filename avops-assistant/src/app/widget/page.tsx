@@ -52,18 +52,16 @@ export default async function WidgetPage() {
   }));
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-edge bg-sidebar px-3 py-2">
-        <span className="text-xs font-semibold tracking-widest text-muted">
-          ILUMINA AV OPS
-        </span>
+    <div className="flex h-full flex-col bg-canvas">
+      <header className="flex items-center justify-between bg-sidebar px-3 py-2">
+        <span className="text-[13px] font-semibold text-text">AV Ops assistant</span>
         <a
           href={env.APP_URL}
           target="_blank"
           rel="noreferrer"
-          className="text-xs text-accent hover:underline"
+          className="text-xs text-link hover:underline"
         >
-          Open full app ↗
+          Open the full app ↗
         </a>
       </header>
       <div className="min-h-0 flex-1">

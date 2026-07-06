@@ -25,43 +25,44 @@ export function FeedbackButtons({ messageId }: { messageId: string }) {
     }
   }
 
-  const buttonClass = (active: boolean) =>
-    `rounded p-1 transition-colors ${
-      active ? "text-accent" : "text-faint hover:bg-hover hover:text-fg"
-    }`;
-
   return (
-    <div className="mt-2 flex items-center gap-1">
+    <div className="mt-2 flex items-center gap-0.5">
       <button
         type="button"
         title="Helpful"
-        className={buttonClass(rating === "up")}
+        aria-pressed={rating === "up"}
+        className={`rounded p-1 transition-colors duration-100 ${
+          rating === "up" ? "text-accent" : "text-text-3 hover:bg-canvas-2 hover:text-text"
+        }`}
         onClick={() => {
           send("up");
           setShowComment(false);
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill={rating === "up" ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill={rating === "up" ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M7 10v12M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88z" />
         </svg>
       </button>
       <button
         type="button"
         title="Not helpful"
-        className={buttonClass(rating === "down")}
+        aria-pressed={rating === "down"}
+        className={`rounded p-1 transition-colors duration-100 ${
+          rating === "down" ? "text-danger" : "text-text-3 hover:bg-canvas-2 hover:text-text"
+        }`}
         onClick={() => {
           send("down");
           setShowComment(true);
           setSent(false);
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill={rating === "down" ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill={rating === "down" ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88z" />
         </svg>
       </button>
       {showComment && !sent && (
         <form
-          className="ml-1 flex items-center gap-1"
+          className="ml-1.5 flex items-center gap-1.5"
           onSubmit={(e) => {
             e.preventDefault();
             if (rating) send(rating, comment.trim());
@@ -73,18 +74,18 @@ export function FeedbackButtons({ messageId }: { messageId: string }) {
             autoFocus
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="What was wrong? (optional)"
-            className="w-56 rounded-md border border-edge bg-bg px-2 py-1 text-xs text-fg placeholder-faint outline-none focus:border-accent"
+            placeholder="What was wrong?"
+            className="h-7 w-56 rounded border border-input-border bg-input px-2 text-[13px] text-text outline-none transition-colors duration-100 focus:border-input-focus"
           />
           <button
             type="submit"
-            className="rounded-md border border-edge px-2 py-1 text-xs text-muted hover:bg-hover hover:text-fg"
+            className="h-7 rounded border border-btn-neutral-border bg-btn-neutral px-2 text-[13px] font-medium text-text transition-colors duration-100 hover:bg-canvas-2"
           >
             Send
           </button>
         </form>
       )}
-      {sent && <span className="ml-1 text-xs text-faint">Thanks — logged for KB review</span>}
+      {sent && <span className="ml-1.5 text-[13px] text-text-3">Logged for wiki review</span>}
     </div>
   );
 }

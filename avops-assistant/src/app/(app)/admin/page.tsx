@@ -71,16 +71,16 @@ export default async function AdminPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[52rem] px-6 py-8">
-        <h1 className="text-xl font-semibold">Admin</h1>
+      <div className="mx-auto max-w-[52rem] px-8 py-10">
+        <h1 className="text-2xl font-semibold text-text">Admin</h1>
 
         {/* KB sync status */}
-        <section className="mt-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">KB sync</h2>
+        <section className="mt-8">
+          <div className="flex items-center justify-between border-b border-divider pb-2">
+            <h2 className="text-[15px] font-semibold text-text">Knowledge base sync</h2>
             <SyncButton />
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Last full sync" value={formatDate(lastSuccess?.finishedAt ?? null)} />
             <Stat label="Documents" value={String(stats?.docCount ?? 0)} />
             <Stat label="Chunks" value={String(stats?.chunkCount ?? 0)} />
@@ -91,13 +91,14 @@ export default async function AdminPage() {
             />
           </div>
 
-          <h3 className="mt-6 text-sm font-semibold text-muted">Recent sync runs</h3>
           {runs.length === 0 ? (
-            <p className="mt-2 text-sm text-faint">No syncs yet. Run one to index the wiki.</p>
+            <p className="mt-4 text-sm text-text-3">
+              No syncs yet. Run one to index the wiki.
+            </p>
           ) : (
-            <table className="mt-2 w-full text-sm">
+            <table className="mt-5 w-full text-sm">
               <thead>
-                <tr className="border-b border-edge text-left text-xs text-faint">
+                <tr className="border-b border-divider text-left text-[13px] text-text-3">
                   <th className="py-1.5 pr-3 font-medium">Started</th>
                   <th className="py-1.5 pr-3 font-medium">Trigger</th>
                   <th className="py-1.5 pr-3 font-medium">Status</th>
@@ -107,17 +108,17 @@ export default async function AdminPage() {
               </thead>
               <tbody>
                 {runs.map((run) => (
-                  <tr key={run.id} className="border-b border-edge/60">
-                    <td className="py-1.5 pr-3">{formatDate(run.startedAt)}</td>
-                    <td className="py-1.5 pr-3">{run.trigger}</td>
-                    <td className="py-1.5 pr-3">
+                  <tr key={run.id} className="border-b border-divider">
+                    <td className="py-2 pr-3 text-text-2">{formatDate(run.startedAt)}</td>
+                    <td className="py-2 pr-3 text-text-2">{run.trigger}</td>
+                    <td className="py-2 pr-3">
                       <StatusBadge status={run.status} />
                       {run.errorMessage && (
                         <span className="ml-2 text-xs text-danger">{run.errorMessage.slice(0, 80)}</span>
                       )}
                     </td>
-                    <td className="py-1.5 pr-3">{run.docCount}</td>
-                    <td className="py-1.5">{run.chunkCount}</td>
+                    <td className="py-2 pr-3 text-text-2">{run.docCount}</td>
+                    <td className="py-2 text-text-2">{run.chunkCount}</td>
                   </tr>
                 ))}
               </tbody>
@@ -131,8 +132,8 @@ export default async function AdminPage() {
                 {docs
                   .filter((d) => d.status === "error")
                   .map((d) => (
-                    <li key={d.outlineId} className="rounded-md border border-danger/40 bg-danger/5 px-3 py-1.5">
-                      <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+                    <li key={d.outlineId} className="rounded-md border border-danger/40 px-3 py-1.5">
+                      <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-link hover:underline">
                         {d.title}
                       </a>
                       <span className="ml-2 text-xs text-danger">{d.errorMessage?.slice(0, 160)}</span>
@@ -145,22 +146,28 @@ export default async function AdminPage() {
 
         {/* Feedback review */}
         <section className="mt-10">
-          <h2 className="text-base font-semibold">Recent feedback</h2>
+          <h2 className="border-b border-divider pb-2 text-[15px] font-semibold text-text">
+            Recent feedback
+          </h2>
           {recentFeedback.length === 0 ? (
-            <p className="mt-2 text-sm text-faint">No feedback yet.</p>
+            <p className="mt-4 text-sm text-text-3">No feedback yet.</p>
           ) : (
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-4 space-y-2">
               {recentFeedback.map((f) => (
-                <li key={f.id} className="rounded-lg border border-edge bg-sidebar px-3 py-2 text-sm">
+                <li key={f.id} className="rounded-md border border-divider bg-menu px-3 py-2.5 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className={f.rating === "up" ? "text-accent" : "text-danger"}>
-                      {f.rating === "up" ? "👍" : "👎"}
+                    <span className={f.rating === "up" ? "text-success" : "text-danger"}>
+                      {f.rating === "up" ? (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10v12H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3zm2 12V9.7L12.8 2c1.7 0 3 1.4 2.6 3l-.9 4h5.3a2 2 0 0 1 1.9 2.6l-2.3 8a2 2 0 0 1-1.9 1.4H9z"/></svg>
+                      ) : (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17 14V2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-3zm-2-12v12.3L11.2 22c-1.7 0-3-1.4-2.6-3l.9-4H4.2a2 2 0 0 1-1.9-2.6l2.3-8A2 2 0 0 1 6.5 3H15z"/></svg>
+                      )}
                     </span>
-                    <span className="font-medium">{f.userName}</span>
-                    <span className="text-xs text-faint">{formatDate(f.createdAt)}</span>
+                    <span className="font-medium text-text">{f.userName}</span>
+                    <span className="text-xs text-text-3">{formatDate(f.createdAt)}</span>
                   </div>
-                  {f.comment && <p className="mt-1 text-fg">“{f.comment}”</p>}
-                  <p className="mt-1 line-clamp-2 text-xs text-muted">{f.answer}</p>
+                  {f.comment && <p className="mt-1 text-text">“{f.comment}”</p>}
+                  <p className="mt-1 line-clamp-2 text-[13px] text-text-2">{f.answer}</p>
                 </li>
               ))}
             </ul>
@@ -168,19 +175,21 @@ export default async function AdminPage() {
         </section>
 
         {/* KB gaps */}
-        <section className="mt-10 pb-10">
-          <h2 className="text-base font-semibold">Possibly unanswered questions</h2>
-          <p className="mt-1 text-xs text-faint">
-            Assistant replies that said the KB doesn&apos;t cover the question — candidates for new wiki pages.
+        <section className="mt-10 pb-12">
+          <h2 className="border-b border-divider pb-2 text-[15px] font-semibold text-text">
+            Possibly unanswered questions
+          </h2>
+          <p className="mt-2 text-[13px] text-text-3">
+            Answers that said the wiki doesn&apos;t cover the question — candidates for new pages.
           </p>
           {unanswered.length === 0 ? (
-            <p className="mt-2 text-sm text-faint">None detected.</p>
+            <p className="mt-3 text-sm text-text-3">None detected.</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {unanswered.map((m) => (
-                <li key={m.id} className="rounded-lg border border-edge px-3 py-2 text-sm">
-                  <span className="text-xs text-faint">{formatDate(m.createdAt)}</span>
-                  <p className="mt-1 line-clamp-3 text-muted">{m.content}</p>
+                <li key={m.id} className="rounded-md border border-divider px-3 py-2 text-sm">
+                  <span className="text-xs text-text-3">{formatDate(m.createdAt)}</span>
+                  <p className="mt-1 line-clamp-3 text-text-2">{m.content}</p>
                 </li>
               ))}
             </ul>
@@ -193,21 +202,21 @@ export default async function AdminPage() {
 
 function Stat({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
   return (
-    <div className="rounded-lg border border-edge bg-sidebar px-3 py-2">
-      <p className="text-xs text-faint">{label}</p>
-      <p className={`text-lg font-semibold ${danger ? "text-danger" : "text-fg"}`}>{value}</p>
+    <div className="rounded-md border border-divider bg-menu px-3 py-2">
+      <p className="text-[13px] text-text-3">{label}</p>
+      <p className={`text-lg font-semibold ${danger ? "text-danger" : "text-text"}`}>{value}</p>
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    success: "bg-accent/10 text-accent",
-    running: "bg-sidebar text-muted",
+    success: "bg-success/15 text-success",
+    running: "bg-canvas-2 text-text-2",
     error: "bg-danger/10 text-danger",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status] ?? ""}`}>
+    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${styles[status] ?? ""}`}>
       {status}
     </span>
   );

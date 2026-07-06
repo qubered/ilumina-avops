@@ -1,76 +1,139 @@
 @import "tailwindcss";
 
-/* Outline-style theme (build brief §8) */
+/*
+ * Outline-native theme. Every value is taken from outline/outline
+ * shared/styles/theme.ts — see DESIGN.md for the full map and rationale.
+ */
 :root {
-  --bg: #ffffff;
-  --bg-sidebar: #f7f8fa;
-  --bg-hover: #f0f1f3;
-  --bg-active: #e9eaee;
-  --fg: #0d1117;
-  --fg-muted: #6b7280;
-  --fg-faint: #9ca3af;
-  --border: #e6e8eb;
+  --canvas: #ffffff;
+  --canvas-2: hsl(212 31% 95%);
+  --canvas-3: #d7e0ea;
+  --sidebar: hsl(212 31% 95%);
+  --sidebar-hover: hsl(212 31% 90%);
+  --sidebar-active: hsl(212 31% 85%);
+  --sidebar-text: rgb(78 92 110);
+  --text: #111319;
+  --text-2: #394351;
+  --text-3: #66778f;
+  --placeholder: #a2b2c3;
+  --divider: #dae1e9;
   --accent: #0366d6;
-  --accent-hover: #0356b6;
+  --accent-hover: #035cbf;
   --accent-fg: #ffffff;
-  --danger: #cf222e;
-  --code-bg: #f4f5f7;
-  --shadow: 0 1px 2px rgba(13, 17, 23, 0.06);
+  --link: #0366d6;
+  --input: hsl(212 31% 95%);
+  --input-border: #dae1e9;
+  --input-focus: #66778f;
+  --menu: #ffffff;
+  --code: #f4f7fa;
+  --code-border: #e8ebed;
+  --btn-neutral: #ffffff;
+  --btn-neutral-border: hsl(212 31% 88%);
+  --danger: #ed2651;
+  --success: #3ad984;
+  --highlight: #fdea9b;
+  --shadow-menu-value: 0 0 0 1px rgb(0 0 0 / 2%), 0 4px 8px rgb(0 0 0 / 8%),
+    0 2px 4px rgb(0 0 0 / 0%), 0 30px 40px rgb(0 0 0 / 8%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #111319;
-    --bg-sidebar: #16181f;
-    --bg-hover: #1d2027;
-    --bg-active: #23262f;
-    --fg: #e6e8eb;
-    --fg-muted: #9aa1ab;
-    --fg-faint: #6b7280;
-    --border: #2a2e37;
-    --accent: #4493e6;
-    --accent-hover: #62a5ec;
-    --accent-fg: #0d1117;
-    --danger: #f47067;
-    --code-bg: #1a1d24;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --canvas: #111319;
+    --canvas-2: #1f232e;
+    --canvas-3: #2a2f3e;
+    --sidebar: #08090c;
+    --sidebar-hover: #14161c;
+    --sidebar-active: #1e2128;
+    --sidebar-text: #66778f;
+    --text: #e6e6e6;
+    --text-2: #7d8ea6;
+    --text-3: #66778f;
+    --placeholder: hsl(215 17% 30%);
+    --divider: #23262e;
+    --accent: #0366d6;
+    --accent-hover: #1272dc;
+    --accent-fg: #ffffff;
+    --link: #137ffb;
+    --input: #262d36;
+    --input-border: #394351;
+    --input-focus: #66778f;
+    --menu: #181c25;
+    --code: #1d202a;
+    --code-border: rgb(255 255 255 / 10%);
+    --btn-neutral: #111319;
+    --btn-neutral-border: #394351;
+    --danger: #f0537a;
+    --success: #3ad984;
+    --highlight: #fdea9b;
+    --shadow-menu-value: 0 0 0 1px rgb(34 40 52), 0 8px 16px rgb(0 0 0 / 30%),
+      0 2px 4px rgb(0 0 0 / 8%);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #111319;
-  --bg-sidebar: #16181f;
-  --bg-hover: #1d2027;
-  --bg-active: #23262f;
-  --fg: #e6e8eb;
-  --fg-muted: #9aa1ab;
-  --fg-faint: #6b7280;
-  --border: #2a2e37;
-  --accent: #4493e6;
-  --accent-hover: #62a5ec;
-  --accent-fg: #0d1117;
-  --danger: #f47067;
-  --code-bg: #1a1d24;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --canvas: #111319;
+  --canvas-2: #1f232e;
+  --canvas-3: #2a2f3e;
+  --sidebar: #08090c;
+  --sidebar-hover: #14161c;
+  --sidebar-active: #1e2128;
+  --sidebar-text: #66778f;
+  --text: #e6e6e6;
+  --text-2: #7d8ea6;
+  --text-3: #66778f;
+  --placeholder: hsl(215 17% 30%);
+  --divider: #23262e;
+  --accent: #0366d6;
+  --accent-hover: #1272dc;
+  --accent-fg: #ffffff;
+  --link: #137ffb;
+  --input: #262d36;
+  --input-border: #394351;
+  --input-focus: #66778f;
+  --menu: #181c25;
+  --code: #1d202a;
+  --code-border: rgb(255 255 255 / 10%);
+  --btn-neutral: #111319;
+  --btn-neutral-border: #394351;
+  --danger: #f0537a;
+  --success: #3ad984;
+  --highlight: #fdea9b;
+  --shadow-menu-value: 0 0 0 1px rgb(34 40 52), 0 8px 16px rgb(0 0 0 / 30%),
+    0 2px 4px rgb(0 0 0 / 8%);
 }
 
 @theme inline {
-  --color-bg: var(--bg);
-  --color-sidebar: var(--bg-sidebar);
-  --color-hover: var(--bg-hover);
-  --color-active: var(--bg-active);
-  --color-fg: var(--fg);
-  --color-muted: var(--fg-muted);
-  --color-faint: var(--fg-faint);
-  --color-edge: var(--border);
+  --color-canvas: var(--canvas);
+  --color-canvas-2: var(--canvas-2);
+  --color-canvas-3: var(--canvas-3);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-text: var(--sidebar-text);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-placeholder: var(--placeholder);
+  --color-divider: var(--divider);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-fg);
+  --color-link: var(--link);
+  --color-input: var(--input);
+  --color-input-border: var(--input-border);
+  --color-input-focus: var(--input-focus);
+  --color-menu: var(--menu);
+  --color-code: var(--code);
+  --color-code-border: var(--code-border);
+  --color-btn-neutral: var(--btn-neutral);
+  --color-btn-neutral-border: var(--btn-neutral-border);
   --color-danger: var(--danger);
-  --color-code: var(--code-bg);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+  --color-success: var(--success);
+  --color-highlight: var(--highlight);
+  --shadow-menu: var(--shadow-menu-value);
+  --font-sans: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto,
+    Oxygen, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier,
     monospace;
 }
 
@@ -80,21 +143,35 @@ body {
 }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--canvas);
+  color: var(--text);
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
-/* Rendered markdown inside chat messages */
+::placeholder {
+  color: var(--placeholder);
+}
+
+/* Outline's focus treatment: visible ring, controls only on keyboard nav */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The assistant's answers are miniature Outline documents (DESIGN.md §4) */
+.message-content {
+  font-size: 16px;
+}
 .message-content > * + * {
-  margin-top: 0.65em;
+  margin-top: 0.7em;
 }
 .message-content h1,
 .message-content h2,
@@ -102,31 +179,34 @@ body {
 .message-content h4 {
   font-weight: 600;
   line-height: 1.3;
-  margin-top: 1.1em;
+  margin-top: 1.2em;
 }
-.message-content h1 { font-size: 1.25em; }
-.message-content h2 { font-size: 1.15em; }
+.message-content h1 { font-size: 1.35em; }
+.message-content h2 { font-size: 1.2em; }
 .message-content h3 { font-size: 1.05em; }
-.message-content ul { list-style: disc; padding-left: 1.4em; }
-.message-content ol { list-style: decimal; padding-left: 1.4em; }
-.message-content li + li { margin-top: 0.2em; }
+.message-content ul { list-style: disc; padding-left: 1.5em; }
+.message-content ol { list-style: decimal; padding-left: 1.5em; }
+.message-content li + li { margin-top: 0.25em; }
+.message-content strong { font-weight: 600; }
 .message-content a {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: none;
 }
-.message-content a:hover { text-decoration: underline; }
+.message-content a:hover {
+  text-decoration: underline;
+}
 .message-content code {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
+  background: var(--code);
+  border: 1px solid var(--code-border);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-family: var(--font-mono);
   font-size: 0.85em;
 }
 .message-content pre {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--code);
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
   padding: 0.75em 1em;
   overflow-x: auto;
 }
@@ -136,32 +216,61 @@ body {
   padding: 0;
 }
 .message-content blockquote {
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--divider);
   padding-left: 1em;
-  color: var(--fg-muted);
+  color: var(--text-2);
 }
 .message-content table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.95em;
+  font-size: 0.9em;
 }
 .message-content th,
 .message-content td {
-  border: 1px solid var(--border);
+  border: 1px solid var(--divider);
   padding: 0.35em 0.6em;
   text-align: left;
 }
 .message-content th {
-  background: var(--bg-sidebar);
+  background: var(--canvas-2);
   font-weight: 600;
 }
 .message-content hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--divider);
+}
+.message-content mark {
+  background: var(--highlight);
+  color: #111319;
+  border-radius: 2px;
+  padding: 0 2px;
 }
 
-/* Quiet scrollbars, Outline-style */
+/* Motion: fast and small, like Outline (DESIGN.md §5) */
+@keyframes message-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+.message-in {
+  animation: message-in 150ms ease-out;
+}
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.soft-pulse {
+  animation: soft-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Quiet scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: var(--divider) transparent;
 }

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
-/** Compact login shown when the widget iframe has no session (brief §9). */
+/** Compact login shown when the widget iframe has no session. */
 export function WidgetLogin({ appUrl }: { appUrl: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -29,15 +29,18 @@ export function WidgetLogin({ appUrl }: { appUrl: string }) {
   }
 
   const inputClass =
-    "w-full rounded-md border border-edge bg-bg px-2.5 py-1.5 text-sm text-fg placeholder-faint outline-none focus:border-accent";
+    "h-8 w-full rounded border border-input-border bg-input px-2.5 text-sm text-text outline-none transition-colors duration-100 focus:border-input-focus";
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 bg-bg px-6">
+    <div className="flex h-full flex-col items-center justify-center gap-4 bg-canvas px-6">
       <div className="text-center">
-        <p className="text-xs font-semibold tracking-widest text-muted">ILUMINA AV OPS</p>
-        <p className="mt-1 text-sm text-muted">Sign in to ask the KB</p>
+        <span className="mx-auto mb-2 flex size-8 items-center justify-center rounded-md bg-accent text-sm font-semibold text-accent-fg">
+          I
+        </span>
+        <p className="text-sm font-medium text-text">Login to AV Ops</p>
+        <p className="text-[13px] text-text-2">Ask the crew knowledge base</p>
       </div>
-      <form onSubmit={handleSubmit} className="w-full max-w-[260px] space-y-2">
+      <form onSubmit={handleSubmit} className="w-full max-w-[240px] space-y-2">
         <input
           type="email"
           placeholder="Email"
@@ -60,18 +63,18 @@ export function WidgetLogin({ appUrl }: { appUrl: string }) {
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-60"
+          className="h-8 w-full rounded bg-accent text-sm font-medium text-accent-fg transition-colors duration-100 hover:bg-accent-hover disabled:opacity-50"
         >
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in…" : "Continue"}
         </button>
       </form>
       <a
         href={appUrl}
         target="_blank"
         rel="noreferrer"
-        className="text-xs text-accent hover:underline"
+        className="text-xs text-link hover:underline"
       >
-        Open full app ↗
+        Open the full app ↗
       </a>
     </div>
   );
