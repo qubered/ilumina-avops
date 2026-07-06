@@ -36,6 +36,9 @@ const envSchema = z
     VOYAGE_API_KEY: z.string().min(1),
     VOYAGE_MODEL: z.string().default("voyage-3-large"),
     QDRANT_URL: z.string().url().default("http://localhost:6333"),
+    // When set, in-flight answers are resumable across tab close / reconnect
+    // (Redis pub/sub via resumable-stream). Empty = poll-on-return fallback.
+    REDIS_URL: z.string().optional().default(""),
     OUTLINE_URL: z.string().url(),
     OUTLINE_API_KEY: z.string().min(1),
     OUTLINE_WEBHOOK_SECRET: z.string().min(1),

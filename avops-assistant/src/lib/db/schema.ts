@@ -26,6 +26,8 @@ export const conversations = pgTable(
     title: text("title").notNull().default("New conversation"),
     // The widget uses a single rolling conversation per user.
     isWidget: boolean("is_widget").notNull().default(false),
+    // Resumable-stream id while an answer is being generated (null when idle).
+    activeStreamId: text("active_stream_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

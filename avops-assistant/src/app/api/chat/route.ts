@@ -13,7 +13,10 @@ import {
   type KbSearchResult,
 } from "@/lib/rag/agent";
 import { mergeSources, parseTrailingSources } from "@/lib/rag/sources";
+import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
+import { randomUUID } from "node:crypto";
+import { UI_MESSAGE_STREAM_HEADERS } from "ai";
 
 export const maxDuration = 120;
 
@@ -151,7 +154,7 @@ export async function POST(req: Request) {
         });
         await db
           .update(conversations)
-          .set({ updatedAt: new Date() })
+          .set({ updatedAt: new Date(), activeStreamId: null })
           .where(eq(conversations.id, conversationId));
       },
       onError: (error) => {
@@ -167,9 +170,26 @@ export async function POST(req: Request) {
       onError: (error) => console.error("[chat] background consume error:", error),
     });
 
+    const streamContext = getStreamContext();
+
     return result.toUIMessageStreamResponse({
       // Stream web citations to the client as source parts.
       sendSources: true,
+      // With Redis available, publish a tee of the SSE stream so a client
+      // that disconnected (tab close / conversation switch) can reattach
+      // mid-answer via GET (see below).
+      ...(streamContext
+        ? {
+            consumeSseStream: async ({ stream }: { stream: ReadableStream<string> }) => {
+              const streamId = randomUUID();
+              await db
+                .update(conversations)
+                .set({ activeStreamId: streamId })
+                .where(eq(conversations.id, conversationId));
+              await streamContext.createNewResumableStream(streamId, () => stream);
+            },
+          }
+        : {}),
       // Message ids are DB-generated; the client refetches on reload anyway.
       onError: (error) => {
         console.error("[chat] response error:", error);
@@ -186,3 +206,40 @@ export async function POST(req: Request) {
 }
 
 export type ChatUIMessage = UIMessage;
+
+/**
+ * Resume an in-flight answer: returns the live SSE stream for the
+ * conversation's active generation, 204 when there is nothing to resume
+ * (no Redis, no active stream, or the stream already finished — the
+ * persisted answer is in the conversation payload instead).
+ */
+export async function GET(req: Request) {
+  const session = await requireSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const conversationId = searchParams.get("conversationId");
+  if (!conversationId || !z.string().uuid().safeParse(conversationId).success) {
+    return NextResponse.json({ error: "Invalid conversationId" }, { status: 400 });
+  }
+
+  const streamContext = getStreamContext();
+  if (!streamContext) return new Response(null, { status: 204 });
+
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.userId, session.user.id)))
+    .limit(1);
+  if (!conversation) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+  if (!conversation.activeStreamId) return new Response(null, { status: 204 });
+
+  const stream = await streamContext.resumeExistingStream(conversation.activeStreamId);
+  if (!stream) return new Response(null, { status: 204 });
+
+  return new Response(stream, { headers: UI_MESSAGE_STREAM_HEADERS });
+}

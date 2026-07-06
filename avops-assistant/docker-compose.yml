@@ -89,6 +89,7 @@ services:
       VOYAGE_API_KEY: ${VOYAGE_API_KEY}
       VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-3-large}
       QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://outline-redis:6379/1
       OUTLINE_URL: ${OUTLINE_URL}
       OUTLINE_API_KEY: ${OUTLINE_API_KEY}
       OUTLINE_WEBHOOK_SECRET: ${OUTLINE_WEBHOOK_SECRET}

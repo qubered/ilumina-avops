@@ -43,6 +43,7 @@ export function Chat({
 
   // conversationId travels as per-request body (set in submit); the transport
   // only reshapes the request to { conversationId, message: <last> }.
+  // Reconnects (resuming an in-flight answer) hit GET /api/chat.
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -53,13 +54,24 @@ export function Chat({
             message: messages[messages.length - 1],
           },
         }),
+        prepareReconnectToStreamRequest: () => ({
+          api: `/api/chat?conversationId=${convIdRef.current}`,
+        }),
       }),
     [],
   );
 
+  // The conversation was left mid-answer (last persisted message is the
+  // user's): try to reattach to the live stream on mount. Falls back to the
+  // polling below when there is nothing to resume.
+  const openedMidAnswer =
+    initialMessages.length > 0 &&
+    initialMessages[initialMessages.length - 1].role === "user";
+
   const { messages, sendMessage, status, error, setMessages, clearError } =
     useChat({
       transport,
+      resume: Boolean(conversationId) && openedMidAnswer,
       messages: toUIMessages(initialMessages),
       onFinish: async () => {
         // Swap in the persisted messages so ids (needed for feedback) and
