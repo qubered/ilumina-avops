@@ -9,6 +9,7 @@ import {
   wrapLanguageModel,
   type LanguageModel,
   type LanguageModelMiddleware,
+  type Tool,
 } from "ai";
 import { env } from "../env";
 
@@ -162,24 +163,49 @@ async function resolveCodexToken(): Promise<{ token: string; accountId: string |
   );
 }
 
+export type ChatStack = {
+  model: LanguageModel;
+  /** Provider-executed tools (web search), merged into the agent's toolset. */
+  providerTools: Record<string, Tool>;
+};
+
 /**
- * The configured chat model. Throws with a human-readable message when the
- * provider is misconfigured (callers surface it as a 503, never a hang).
+ * The configured chat model plus its provider-executed web-search tool
+ * (DESIGN: KB is the only authority for venue facts; the web covers general
+ * equipment/manufacturer info). Throws with a human-readable message when
+ * the provider is misconfigured (callers surface it as a 503, never a hang).
  */
-export async function getChatModel(): Promise<LanguageModel> {
-  if (env.AI_PROVIDER === "codex") {
-    const { token, accountId } = await resolveCodexToken();
-    const openai = createOpenAI({
-      name: "codex",
-      baseURL: env.CODEX_BASE_URL,
-      apiKey: token,
-      headers: {
-        "chatgpt-account-id": accountId ?? "",
-        "OpenAI-Beta": "responses=experimental",
-        originator: "codex_cli_rs",
-        session_id: SESSION_ID,
-      },
-    });
+export async function getChatStack(): Promise<ChatStack> {
+  if (env.AI_PROVIDER === "codex" || env.AI_PROVIDER === "openai") {
+    const openai =
+      env.AI_PROVIDER === "codex"
+        ? await (async () => {
+            const { token, accountId } = await resolveCodexToken();
+            return createOpenAI({
+              name: "codex",
+              baseURL: env.CODEX_BASE_URL,
+              apiKey: token,
+              headers: {
+                "chatgpt-account-id": accountId ?? "",
+                "OpenAI-Beta": "responses=experimental",
+                originator: "codex_cli_rs",
+                session_id: SESSION_ID,
+              },
+            });
+          })()
+        : createOpenAI({
+            apiKey: env.OPENAI_API_KEY,
+            baseURL: env.OPENAI_BASE_URL || undefined,
+          });
+
+    const providerTools: Record<string, Tool> = env.AI_WEB_SEARCH
+      ? { web_search: openai.tools.webSearch({}) }
+      : {};
+
+    if (env.AI_PROVIDER === "openai") {
+      return { model: openai.responses(env.OPENAI_MODEL), providerTools };
+    }
+
     // The Codex backend is strict: it requires `store: false` and rejects
     // standard sampling/limit params ("Unsupported parameter:
     // max_output_tokens"). Bake both into the model so call sites stay
@@ -194,26 +220,31 @@ export async function getChatModel(): Promise<LanguageModel> {
         presencePenalty: undefined,
       }),
     };
-    return wrapLanguageModel({
-      model: openai.responses(env.CODEX_MODEL),
-      middleware: [
-        stripUnsupportedParams,
-        defaultSettingsMiddleware({
-          settings: { providerOptions: { openai: { store: false } } },
-        }),
-      ],
-    });
+    return {
+      model: wrapLanguageModel({
+        model: openai.responses(env.CODEX_MODEL),
+        middleware: [
+          stripUnsupportedParams,
+          defaultSettingsMiddleware({
+            settings: { providerOptions: { openai: { store: false } } },
+          }),
+        ],
+      }),
+      providerTools,
+    };
   }
 
-  if (env.AI_PROVIDER === "openai") {
-    const openai = createOpenAI({
-      apiKey: env.OPENAI_API_KEY,
-      baseURL: env.OPENAI_BASE_URL || undefined,
-    });
-    return openai.responses(env.OPENAI_MODEL);
-  }
+  return {
+    model: anthropic(env.ANTHROPIC_MODEL),
+    providerTools: env.AI_WEB_SEARCH
+      ? { web_search: anthropic.tools.webSearch_20250305({ maxUses: 3 }) }
+      : {},
+  };
+}
 
-  return anthropic(env.ANTHROPIC_MODEL);
+/** Model only — for single-shot calls like title generation. */
+export async function getChatModel(): Promise<LanguageModel> {
+  return (await getChatStack()).model;
 }
 
 /**

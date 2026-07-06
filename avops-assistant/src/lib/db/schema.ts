@@ -14,7 +14,7 @@ import { user } from "./auth-schema";
 // Better Auth owns users/sessions/accounts + OIDC provider tables.
 export * from "./auth-schema";
 
-export type Source = { title: string; url: string };
+export type Source = { title: string; url: string; kind?: "kb" | "web" };
 
 export const conversations = pgTable(
   "conversations",

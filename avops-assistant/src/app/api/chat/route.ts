@@ -6,12 +6,14 @@ import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type Source } from "@/lib/db";
 import {
   agentTools,
-  getChatModel,
+  getChatStack,
   MAX_STEPS,
   SYSTEM_PROMPT,
   systemPromptOptions,
   type KbSearchResult,
 } from "@/lib/rag/agent";
+import { mergeSources, parseTrailingSources } from "@/lib/rag/sources";
+import { env } from "@/lib/env";
 
 export const maxDuration = 120;
 
@@ -33,21 +35,45 @@ function extractText(parts: { type: string; text?: string }[]): string {
     .trim();
 }
 
-/** Collect deduped sources from kb_search results, preferring ones cited in the answer. */
-function collectSources(steps: Array<{ toolResults?: unknown[] }>, answer: string): Source[] {
-  const all: Source[] = [];
+/**
+ * Collect deduped sources: KB pages from kb_search results (preferring ones
+ * cited in the answer) plus web citations from provider-executed search.
+ */
+function collectSources(
+  steps: Array<{
+    toolResults?: unknown[];
+    sources?: Array<{ sourceType?: string; url?: string; title?: string }>;
+  }>,
+  answer: string,
+): Source[] {
+  const kb: Source[] = [];
+  const web: Source[] = [];
   for (const step of steps) {
     for (const result of step.toolResults ?? []) {
       const r = result as { toolName?: string; output?: KbSearchResult[] };
       if (r.toolName !== "kb_search" || !Array.isArray(r.output)) continue;
       for (const hit of r.output) {
-        if (hit?.title && hit?.url) all.push({ title: hit.title, url: hit.url });
+        if (hit?.title && hit?.url) kb.push({ title: hit.title, url: hit.url, kind: "kb" });
+      }
+    }
+    for (const source of step.sources ?? []) {
+      if (source.sourceType === "url" && source.url) {
+        web.push({
+          title: source.title || new URL(source.url).hostname,
+          url: source.url,
+          kind: "web",
+        });
       }
     }
   }
-  const deduped = [...new Map(all.map((s) => [s.url, s])).values()];
-  const cited = deduped.filter((s) => answer.includes(s.url) || answer.includes(s.title));
-  return cited.length > 0 ? cited : deduped;
+  const dedupedKb = [...new Map(kb.map((s) => [s.url, s])).values()];
+  const citedKb = dedupedKb.filter((s) => answer.includes(s.url) || answer.includes(s.title));
+  const dedupedWeb = [...new Map(web.map((s) => [s.url, s])).values()].slice(0, 6);
+  // The model's own trailing Sources list backstops providers whose web
+  // search returns no citation annotations (e.g. the Codex backend) — the
+  // UI strips that list, so anything in it must be captured here.
+  const fromText = parseTrailingSources(answer, env.OUTLINE_URL);
+  return mergeSources(citedKb.length > 0 ? citedKb : dedupedKb, dedupedWeb, fromText);
 }
 
 export async function POST(req: Request) {
@@ -58,9 +84,9 @@ export async function POST(req: Request) {
 
   // Resolve the model first: misconfigured provider (e.g. expired Codex
   // login) becomes a clear 503, never a hang.
-  let model;
+  let stack;
   try {
-    model = await getChatModel();
+    stack = await getChatStack();
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "AI backend is not configured." },
@@ -110,10 +136,10 @@ export async function POST(req: Request) {
 
   try {
     const result = streamText({
-      model,
+      model: stack.model,
       ...systemPromptOptions(SYSTEM_PROMPT),
       messages: modelMessages,
-      tools: agentTools,
+      tools: { ...agentTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
@@ -134,6 +160,8 @@ export async function POST(req: Request) {
     });
 
     return result.toUIMessageStreamResponse({
+      // Stream web citations to the client as source parts.
+      sendSources: true,
       // Message ids are DB-generated; the client refetches on reload anyway.
       onError: (error) => {
         console.error("[chat] response error:", error);

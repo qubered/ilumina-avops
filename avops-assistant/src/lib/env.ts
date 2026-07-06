@@ -13,6 +13,13 @@ const envSchema = z
     //   openai    — OpenAI or any OpenAI-compatible endpoint, with an API key
     //   codex     — the Codex CLI's ChatGPT subscription login (~/.codex/auth.json)
     AI_PROVIDER: z.enum(["anthropic", "openai", "codex"]).default("anthropic"),
+    // Provider-executed web search for general equipment/manufacturer info
+    // (the KB stays the only authority for venue-specific facts).
+    AI_WEB_SEARCH: z
+      .string()
+      .optional()
+      .default("true")
+      .transform((v) => v !== "false"),
     ANTHROPIC_API_KEY: z.string().optional().default(""),
     ANTHROPIC_MODEL: z.string().default("claude-sonnet-5"),
     OPENAI_BASE_URL: z.string().optional().default(""),
