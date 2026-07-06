@@ -5,6 +5,9 @@ const envSchema = z
     DATABASE_URL: z.string().min(1),
     AUTH_SECRET: z.string().min(32),
     COOKIE_DOMAIN: z.string().optional().default(""),
+    // When set, registration requires this key (crew invite code). Leave
+    // empty to allow open registration.
+    SIGNUP_KEY: z.string().optional().default(""),
     // Chat model backend (see src/lib/rag/model.ts):
     //   anthropic — Anthropic API (default)
     //   openai    — OpenAI or any OpenAI-compatible endpoint, with an API key

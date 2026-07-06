@@ -76,6 +76,7 @@ services:
       DATABASE_URL: postgres://avops:${AVOPS_DB_PASSWORD}@outline-postgres:5432/avops
       AUTH_SECRET: ${AUTH_SECRET}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      SIGNUP_KEY: ${SIGNUP_KEY:-}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}

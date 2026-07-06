@@ -3,7 +3,7 @@
 AI assistant for the ILUMINA venue AV crew (Harry The Hirer Productions). Answers operational questions **only** from the crew's Outline wiki knowledge base, with citations back to the exact source page. Runs beside the wiki, matches its look, and embeds into Outline pages as a chat widget.
 
 - **Chat** — streaming answers with a `kb_search` tool loop (Claude via the Vercel AI SDK), source chips under every answer, multi-turn follow-ups, per-user conversation history with auto-titles.
-- **Accounts** — email + password via Better Auth. First registered user becomes admin. **This app is also the OIDC identity provider for Outline** — crew log into the wiki with the same account (see [Outline SSO](#outline-sso-this-app-as-identity-provider)).
+- **Accounts** — email + password via Better Auth, optionally gated by a crew invite code (`SIGNUP_KEY`; empty = open registration). First registered user becomes admin. **This app is also the OIDC identity provider for Outline** — crew log into the wiki with the same account (see [Outline SSO](#outline-sso-this-app-as-identity-provider)).
 - **KB sync** — full sync from Outline's API (published, non-template, non-archived docs only), instant re-index via HMAC-verified webhooks, nightly 04:00 Australia/Sydney cron backstop.
 - **Admin** — sync status, per-doc errors, re-sync button, feedback review, KB-gap candidates.
 - **Widget** — `widget.js` injects a chat bubble into Outline via nginx `sub_filter`; the panel iframes `/widget` (CSP `frame-ancestors`, cross-subdomain cookies).

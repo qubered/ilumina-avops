@@ -13,12 +13,19 @@ const inputClass =
  * authorize redirect (Outline SSO), better-auth resumes that flow
  * automatically after sign-in.
  */
-export function AuthForm({ mode }: { mode: "login" | "register" }) {
+export function AuthForm({
+  mode,
+  requiresSignupKey = false,
+}: {
+  mode: "login" | "register";
+  requiresSignupKey?: boolean;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [signupKey, setSignupKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -36,6 +43,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           name,
           email,
           password,
+          fetchOptions: signupKey
+            ? { headers: { "x-signup-key": signupKey } }
+            : undefined,
         });
         if (signUpError) {
           setError(signUpError.message ?? "Registration failed.");
@@ -123,6 +133,23 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               autoComplete={mode === "login" ? "current-password" : "new-password"}
             />
           </div>
+          {mode === "register" && requiresSignupKey && (
+            <div>
+              <label htmlFor="signupKey" className="mb-1 block text-sm font-medium">
+                Signup key
+              </label>
+              <input
+                id="signupKey"
+                type="password"
+                className={inputClass}
+                value={signupKey}
+                onChange={(e) => setSignupKey(e.target.value)}
+                required
+                autoComplete="off"
+                placeholder="Crew invite code"
+              />
+            </div>
+          )}
           {error && <p className="text-sm text-danger">{error}</p>}
           <button
             type="submit"

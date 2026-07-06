@@ -39,6 +39,7 @@ cat > .env <<EOF
 DATABASE_URL=postgres://avops:avops@localhost:55432/avops
 AUTH_SECRET=$(openssl rand -hex 32)
 COOKIE_DOMAIN=
+SIGNUP_KEY=                  # optional crew invite code; empty = open registration
 
 AI_PROVIDER=codex            # or: anthropic (+ ANTHROPIC_API_KEY)
 CODEX_MODEL=gpt-5.5

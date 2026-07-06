@@ -1,7 +1,9 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { oidcProvider } from "better-auth/plugins";
+import { timingSafeEqual } from "node:crypto";
 import { count } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "./db";
@@ -47,6 +49,21 @@ function createAuth() {
         input: false, // never settable from the signup payload
       },
     },
+  },
+  hooks: {
+    // Registration gate: when SIGNUP_KEY is set, sign-up requires it
+    // (sent as the x-signup-key header by the register form).
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/sign-up/email" || !env.SIGNUP_KEY) return;
+      const provided = ctx.headers?.get("x-signup-key") ?? "";
+      const a = Buffer.from(provided);
+      const b = Buffer.from(env.SIGNUP_KEY);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        throw new APIError("FORBIDDEN", {
+          message: "Invalid signup key. Ask the AV lead for the crew invite code.",
+        });
+      }
+    }),
   },
   databaseHooks: {
     user: {
