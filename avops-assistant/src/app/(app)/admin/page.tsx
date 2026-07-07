@@ -116,7 +116,8 @@ export default async function AdminOverviewPage() {
         {runs.length === 0 ? (
           <p className="mt-4 text-sm text-text-3">No syncs yet. Run one to index the wiki.</p>
         ) : (
-          <table className="mt-5 w-full text-sm">
+          <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[540px] text-sm">
             <thead>
               <tr className="border-b border-divider text-left text-[13px] text-text-3">
                 <th className="py-1.5 pr-3 font-medium">Started</th>
@@ -145,6 +146,7 @@ export default async function AdminOverviewPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         {docsWithErrors.length > 0 && (

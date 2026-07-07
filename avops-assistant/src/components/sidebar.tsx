@@ -81,7 +81,7 @@ export function Sidebar({
         {renamingId === c.id ? (
           <input
             autoFocus
-            className="my-px h-8 w-full rounded border border-input-focus bg-canvas px-2 text-[15px] text-text outline-none"
+            className="my-px h-8 w-full rounded border border-input-focus bg-canvas px-2 text-base text-text outline-none md:text-[15px]"
             value={renameValue}
             onChange={(e) => setRenameValue(e.target.value)}
             onBlur={() => handleRename(c.id)}
@@ -102,8 +102,9 @@ export function Sidebar({
             <span className="truncate">{c.title}</span>
           </Link>
         )}
+        {/* Actions: hover-revealed on desktop, always visible on touch layouts */}
         {renamingId !== c.id && (
-          <span className="absolute top-1/2 right-1 hidden -translate-y-1/2 gap-0.5 group-hover:flex group-focus-within:flex">
+          <span className="absolute top-1/2 right-1 hidden -translate-y-1/2 gap-0.5 group-hover:flex group-focus-within:flex max-md:flex">
             <button
               type="button"
               title={c.pinned ? "Unpin" : "Pin"}
@@ -144,7 +145,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col bg-sidebar">
+    <aside className="flex h-full w-[260px] shrink-0 flex-col bg-sidebar">
       {/* Workspace row, set like Outline's team name */}
       <div className="px-4 pt-3 pb-2">
         <Link
@@ -241,14 +242,22 @@ export function Sidebar({
             Admin
           </Link>
         )}
-        <div className="flex items-center gap-2 px-1 pt-1">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent text-[13px] font-medium text-accent-fg">
-            {initial}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-text">{user.name}</p>
-            <p className="truncate text-xs text-text-3">{user.email}</p>
-          </div>
+        <div className="flex items-center gap-1 pt-1">
+          <Link
+            href="/settings"
+            title="Settings"
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 transition-colors duration-100 ${
+              pathname === "/settings" ? "bg-sidebar-active" : "hover:bg-sidebar-hover"
+            }`}
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent text-[13px] font-medium text-accent-fg">
+              {initial}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-text">{user.name}</span>
+              <span className="block truncate text-xs text-text-3">{user.email}</span>
+            </span>
+          </Link>
           <ThemeToggle />
           <button
             type="button"

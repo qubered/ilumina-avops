@@ -29,7 +29,7 @@ export function WidgetLogin({ appUrl }: { appUrl: string }) {
   }
 
   const inputClass =
-    "h-8 w-full rounded border border-input-border bg-input px-2.5 text-sm text-text outline-none transition-colors duration-100 focus:border-input-focus";
+    "h-8 w-full rounded border border-input-border bg-input px-2.5 text-base text-text outline-none transition-colors duration-100 focus:border-input-focus md:text-sm";
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-canvas px-6">

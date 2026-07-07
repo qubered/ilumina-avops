@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { Sidebar } from "@/components/sidebar";
+import { AppShell } from "@/components/app-shell";
 
 export default async function AppLayout({
   children,
@@ -12,16 +12,15 @@ export default async function AppLayout({
   if (!session) redirect("/login");
 
   return (
-    <div className="flex h-full">
-      <Sidebar
-        user={{
-          name: session.user.name,
-          email: session.user.email,
-          role: session.user.role ?? "member",
-        }}
-        outlineUrl={env.OUTLINE_URL}
-      />
-      <main className="min-w-0 flex-1">{children}</main>
-    </div>
+    <AppShell
+      user={{
+        name: session.user.name,
+        email: session.user.email,
+        role: session.user.role ?? "member",
+      }}
+      outlineUrl={env.OUTLINE_URL}
+    >
+      {children}
+    </AppShell>
   );
 }

@@ -75,7 +75,7 @@ export function FeedbackButtons({ messageId }: { messageId: string }) {
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="What was wrong?"
-            className="h-7 w-56 rounded border border-input-border bg-input px-2 text-[13px] text-text outline-none transition-colors duration-100 focus:border-input-focus"
+            className="h-8 w-56 max-w-[60vw] rounded border border-input-border bg-input px-2 text-base text-text outline-none transition-colors duration-100 focus:border-input-focus md:h-7 md:text-[13px]"
           />
           <button
             type="submit"

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 const inputClass =
-  "h-9 w-full rounded border border-input-border bg-input px-3 text-[15px] text-text outline-none transition-colors duration-100 focus:border-input-focus";
+  "h-9 w-full rounded border border-input-border bg-input px-3 text-base text-text outline-none transition-colors duration-100 focus:border-input-focus md:text-[15px]";
 const labelClass = "mb-1 block text-sm font-medium text-text-2";
 
 /**
@@ -77,7 +77,7 @@ export function AuthForm({
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-canvas px-4">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-xs">
         <div className="mb-8 text-center">
           <span className="mx-auto mb-3 flex size-9 items-center justify-center rounded-md bg-accent font-brand text-[16px] font-semibold text-accent-fg">

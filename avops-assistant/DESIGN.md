@@ -149,7 +149,23 @@ Sentence case, plain verbs, crew-to-crew register. Buttons say what they do
 ("Ask the AV Ops knowledge base"). No exclamation marks, no apologies, no
 "oops".
 
-## 7. Accessibility floor
+## 7. Mobile (the primary interface)
+
+Crew use this from the venue floor mid-show; phone first, desktop enhanced.
+
+- **Shell**: below `md` the sidebar becomes a slide-over drawer behind a
+  48px top bar (menu button + wordmark). Opening records the route; any
+  navigation closes it. Backdrop tap closes.
+- **Touch affordances**: hover-revealed row actions (pin/rename/delete)
+  are always visible below `md` — hover doesn't exist on the floor.
+- **Inputs are ≥16px on mobile** (`text-base md:text-[15px]`) so iOS
+  Safari never auto-zooms on focus.
+- **Heights use `dvh`**, not `vh` — mobile browser chrome collapses.
+- **Nothing scrolls the body horizontally**: wide tables (admin, message
+  content) scroll inside their own `overflow-x-auto` container.
+- Keyboard-shortcut hints hide below `md`.
+
+## 8. Accessibility floor
 
 - `:focus-visible`: 2px `accent` outline, 2px offset, everywhere.
 - Text contrast ≥ 4.5:1 on canvas in both themes (tertiary text is meta-only).

@@ -170,7 +170,7 @@ export function Chat({
     <div className="flex h-full min-h-0 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div
-          className={`mx-auto w-full ${compact ? "px-3 py-3" : "max-w-[46rem] px-8 py-8"}`}
+          className={`mx-auto w-full ${compact ? "px-3 py-3" : "max-w-[46rem] px-4 py-6 md:px-8 md:py-8"}`}
         >
           {showStarters ? (
             <div className={compact ? "pt-3" : "pt-20"}>
@@ -267,7 +267,7 @@ function Composer({
   }
 
   return (
-    <div className={compact ? "p-2" : "px-8 pb-6"}>
+    <div className={compact ? "p-2" : "px-4 pb-4 md:px-8 md:pb-6"}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -287,7 +287,7 @@ function Composer({
             }
           }}
           placeholder="Ask about AV ops…"
-          className="max-h-40 min-h-6 flex-1 resize-none bg-transparent text-[15px] text-text outline-none"
+          className="max-h-40 min-h-6 flex-1 resize-none bg-transparent text-base text-text outline-none md:text-[15px]"
           style={{ fieldSizing: "content" } as React.CSSProperties}
         />
         <button
@@ -302,7 +302,7 @@ function Composer({
         </button>
       </form>
       {!compact && (
-        <p className="mx-auto mt-1.5 max-w-[46rem] px-1 text-xs text-text-3">
+        <p className="mx-auto mt-1.5 hidden max-w-[46rem] px-1 text-xs text-text-3 md:block">
           Enter to send · Shift+Enter for a new line · / to focus
         </p>
       )}

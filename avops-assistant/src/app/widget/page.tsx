@@ -52,7 +52,7 @@ export default async function WidgetPage() {
   }));
 
   return (
-    <div className="flex h-full flex-col bg-canvas">
+    <div className="flex h-dvh flex-col bg-canvas">
       <header className="flex items-center justify-between bg-sidebar px-3 py-2">
         <span className="font-brand text-sm font-semibold text-text">
           ILUMINA AV Ops

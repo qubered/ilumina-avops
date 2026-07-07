@@ -50,7 +50,8 @@ export default async function AdminUsersPage() {
             {process.env.SIGNUP_KEY ? "with the signup key" : "(open registration)"}
           </p>
         </div>
-        <table className="mt-3 w-full text-sm">
+        <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-divider text-left text-[13px] text-text-3">
               <th className="py-1.5 pr-3 font-medium">Name</th>
@@ -77,6 +78,7 @@ export default async function AdminUsersPage() {
             ))}
           </tbody>
         </table>
+        </div>
         <p className="mt-3 text-[13px] text-text-3">
           Suspending blocks sign-in (and Outline SSO) but keeps the account and its
           history. Removing deletes the account and all of its conversations.

@@ -226,6 +226,9 @@ body {
   border-collapse: collapse;
   width: 100%;
   font-size: 0.9em;
+  /* Wide tables scroll instead of blowing out the column (mobile-first). */
+  display: block;
+  overflow-x: auto;
 }
 .message-content th,
 .message-content td {
