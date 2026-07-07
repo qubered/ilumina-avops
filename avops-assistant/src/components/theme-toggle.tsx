@@ -29,9 +29,9 @@ export function ThemeToggle() {
   function toggle() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem("avops-theme", next);
-    } catch {}
+    // Cookie (not localStorage) so the server renders the right theme on
+    // the next load — no init script, no flash.
+    document.cookie = `avops-theme=${next}; path=/; max-age=31536000; samesite=lax`;
     window.dispatchEvent(new Event(THEME_EVENT));
   }
 

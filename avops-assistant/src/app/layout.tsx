@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk } from "next/font/google";
+import { cookies } from "next/headers";
 import "./globals.css";
 
 // Heading face — geometric like the ILUMINA brand's Poppins, but with the
@@ -17,22 +18,22 @@ export const metadata: Metadata = {
   description: "AI assistant for the ILUMINA AV crew knowledge base",
 };
 
-// Applies the saved theme before first paint to avoid a flash.
-const themeScript = `
-try {
-  var t = localStorage.getItem("avops-theme");
-  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-} catch (e) {}
-`;
-
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Manual theme override travels as a cookie so it can be applied
+  // server-side — no theme-init script, no flash. Absent cookie falls back
+  // to prefers-color-scheme via CSS.
+  const themeCookie = (await cookies()).get("avops-theme")?.value;
+  const theme = themeCookie === "light" || themeCookie === "dark" ? themeCookie : undefined;
+
   return (
-    <html lang="en" suppressHydrationWarning className={`h-full ${spaceGrotesk.variable}`}>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
-      </head>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-theme={theme}
+      className={`h-full ${spaceGrotesk.variable}`}
+    >
       <body className="h-full">{children}</body>
     </html>
   );

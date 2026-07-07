@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
-import { oidcProvider } from "better-auth/plugins";
+import { admin, oidcProvider } from "better-auth/plugins";
 import { timingSafeEqual } from "node:crypto";
 import { count } from "drizzle-orm";
 import { headers } from "next/headers";
@@ -41,15 +41,7 @@ function createAuth() {
     requireEmailVerification: false,
     minPasswordLength: 8,
   },
-  user: {
-    additionalFields: {
-      role: {
-        type: "string",
-        defaultValue: "member",
-        input: false, // never settable from the signup payload
-      },
-    },
-  },
+  // user.role is owned by the admin plugin (defaultRole "member").
   hooks: {
     // Registration gate: when SIGNUP_KEY is set, sign-up requires it
     // (sent as the x-signup-key header by the register form).
@@ -100,6 +92,9 @@ function createAuth() {
     : undefined,
   trustedOrigins: [env.OUTLINE_URL],
   plugins: [
+    // User management for the admin page: list/set-role/ban/remove, with
+    // authorization enforced on the server for role "admin".
+    admin({ adminRoles: ["admin"], defaultRole: "member" }),
     oidcProvider({
       loginPage: "/login",
       trustedClients: outlineOidcClient,
