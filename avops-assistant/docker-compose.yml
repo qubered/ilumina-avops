@@ -134,13 +134,19 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
     ports:
       - "3001:3000"
-    # For AI_PROVIDER=codex: mount the host's Codex CLI login (run
-    # `codex login` on the host once). Must be READ-WRITE: OpenAI refresh
-    # tokens are single-use, so rotated tokens are persisted back to
-    # auth.json — a read-only mount would burn the stored refresh token on
-    # the first auto-refresh.
-    # volumes:
-    #   - ~/.codex:/codex-auth
+    # For AI_PROVIDER=codex the app reads /codex-auth/auth.json. Don't edit
+    # this tracked file — put the mount in docker-compose.override.yml
+    # (gitignored, auto-merged, survives `git reset --hard`):
+    #
+    #   services:
+    #     assistant:
+    #       volumes:
+    #         - ${HOME}/.codex:/codex-auth   # ${HOME}, NOT ~ — compose won't expand ~
+    #
+    # Read-write (no :ro): OpenAI refresh tokens are single-use, so the app
+    # persists rotated tokens back to auth.json. Give the server its OWN
+    # `codex login` rather than copying a machine you still use codex on —
+    # a shared refresh token breaks whichever device refreshes second.
     restart: unless-stopped
 
   # Widget-injection layer only: sub_filter adds the chat bubble script to

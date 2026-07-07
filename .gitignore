@@ -1,5 +1,6 @@
 # secrets & local-only config — never commit
 avops-assistant/.env
+avops-assistant/docker-compose.override.yml
 avops-assistant/docker/dev-outline-secrets.env
 avops-assistant/docker/orbstack-root-ca.pem
 
