@@ -15,6 +15,13 @@
       "when": 1783381984665,
       "tag": "0001_active-stream-id",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783382323946,
+      "tag": "0002_pinned-conversations",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { ThemeToggle } from "./theme-toggle";
 
-type ConversationRow = { id: string; title: string; updatedAt: string };
+type ConversationRow = { id: string; title: string; pinned: boolean; updatedAt: string };
 
 export function Sidebar({
   user,
@@ -57,6 +57,15 @@ export function Sidebar({
     refresh();
   }
 
+  async function handleTogglePin(id: string, pinned: boolean) {
+    await fetch(`/api/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned: !pinned }),
+    });
+    refresh();
+  }
+
   async function handleSignOut() {
     await authClient.signOut();
     router.push("/login");
@@ -64,6 +73,75 @@ export function Sidebar({
   }
 
   const initial = (user.name || "?").charAt(0).toUpperCase();
+
+  function renderConversation(c: ConversationRow) {
+    const active = pathname === `/c/${c.id}`;
+    return (
+      <li key={c.id} className="group relative">
+        {renamingId === c.id ? (
+          <input
+            autoFocus
+            className="my-px h-8 w-full rounded border border-input-focus bg-canvas px-2 text-[15px] text-text outline-none"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={() => handleRename(c.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleRename(c.id);
+              if (e.key === "Escape") setRenamingId(null);
+            }}
+          />
+        ) : (
+          <Link
+            href={`/c/${c.id}`}
+            className={`flex h-8 items-center truncate rounded px-2 pr-20 text-[15px] transition-colors duration-100 ${
+              active
+                ? "bg-sidebar-active font-medium text-text"
+                : "text-sidebar-text hover:bg-sidebar-hover hover:text-text"
+            }`}
+          >
+            <span className="truncate">{c.title}</span>
+          </Link>
+        )}
+        {renamingId !== c.id && (
+          <span className="absolute top-1/2 right-1 hidden -translate-y-1/2 gap-0.5 group-hover:flex group-focus-within:flex">
+            <button
+              type="button"
+              title={c.pinned ? "Unpin" : "Pin"}
+              onClick={() => handleTogglePin(c.id, c.pinned)}
+              className="rounded p-1 text-sidebar-text transition-colors duration-100 hover:bg-sidebar-active hover:text-text"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill={c.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 17v5M9 3h6l1 7 3 2v2H5v-2l3-2z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Rename"
+              onClick={() => {
+                setRenamingId(c.id);
+                setRenameValue(c.title);
+              }}
+              className="rounded p-1 text-sidebar-text transition-colors duration-100 hover:bg-sidebar-active hover:text-text"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Delete"
+              onClick={() => handleDelete(c.id)}
+              className="rounded p-1 text-sidebar-text transition-colors duration-100 hover:bg-sidebar-active hover:text-danger"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+            </button>
+          </span>
+        )}
+      </li>
+    );
+  }
 
   return (
     <aside className="flex w-[260px] shrink-0 flex-col bg-sidebar">
@@ -102,74 +180,44 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-2">
-        <p className="px-2 pb-1 text-[13px] font-medium text-sidebar-text">
-          Conversations
-        </p>
         {conversations === null ? null : conversations.length === 0 ? (
-          <p className="px-2 py-1 text-sm text-sidebar-text">
-            Ask something to start one
-          </p>
+          <>
+            <p className="px-2 pb-1 text-[13px] font-medium text-sidebar-text">
+              Conversations
+            </p>
+            <p className="px-2 py-1 text-sm text-sidebar-text">
+              Ask something to start one
+            </p>
+          </>
         ) : (
-          <ul>
-            {conversations.map((c) => {
-              const active = pathname === `/c/${c.id}`;
-              return (
-                <li key={c.id} className="group relative">
-                  {renamingId === c.id ? (
-                    <input
-                      autoFocus
-                      className="my-px h-8 w-full rounded border border-input-focus bg-canvas px-2 text-[15px] text-text outline-none"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={() => handleRename(c.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleRename(c.id);
-                        if (e.key === "Escape") setRenamingId(null);
-                      }}
-                    />
-                  ) : (
-                    <Link
-                      href={`/c/${c.id}`}
-                      className={`flex h-8 items-center truncate rounded px-2 pr-14 text-[15px] transition-colors duration-100 ${
-                        active
-                          ? "bg-sidebar-active font-medium text-text"
-                          : "text-sidebar-text hover:bg-sidebar-hover hover:text-text"
-                      }`}
-                    >
-                      <span className="truncate">{c.title}</span>
-                    </Link>
-                  )}
-                  {renamingId !== c.id && (
-                    <span className="absolute top-1/2 right-1 hidden -translate-y-1/2 gap-0.5 group-hover:flex group-focus-within:flex">
-                      <button
-                        type="button"
-                        title="Rename"
-                        onClick={() => {
-                          setRenamingId(c.id);
-                          setRenameValue(c.title);
-                        }}
-                        className="rounded p-1 text-sidebar-text transition-colors duration-100 hover:bg-sidebar-active hover:text-text"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete"
-                        onClick={() => handleDelete(c.id)}
-                        className="rounded p-1 text-sidebar-text transition-colors duration-100 hover:bg-sidebar-active hover:text-danger"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                        </svg>
-                      </button>
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            {conversations.some((c) => c.pinned) && (
+              <>
+                <p className="px-2 pb-1 text-[13px] font-medium text-sidebar-text">
+                  Pinned
+                </p>
+                <ul className="mb-3">
+                  {conversations
+                    .filter((c) => c.pinned)
+                    .map((c) => renderConversation(c))}
+                </ul>
+              </>
+            )}
+            <p className="px-2 pb-1 text-[13px] font-medium text-sidebar-text">
+              Conversations
+            </p>
+            {conversations.every((c) => c.pinned) ? (
+              <p className="px-2 py-1 text-sm text-sidebar-text">
+                Ask something to start one
+              </p>
+            ) : (
+              <ul>
+                {conversations
+                  .filter((c) => !c.pinned)
+                  .map((c) => renderConversation(c))}
+              </ul>
+            )}
+          </>
         )}
       </nav>
 

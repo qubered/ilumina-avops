@@ -36,11 +36,12 @@ export async function GET() {
     .select({
       id: conversations.id,
       title: conversations.title,
+      pinned: conversations.pinned,
       updatedAt: conversations.updatedAt,
     })
     .from(conversations)
     .where(and(eq(conversations.userId, session.user.id), eq(conversations.isWidget, false)))
-    .orderBy(desc(conversations.updatedAt));
+    .orderBy(desc(conversations.pinned), desc(conversations.updatedAt));
 
   return NextResponse.json({ conversations: rows });
 }

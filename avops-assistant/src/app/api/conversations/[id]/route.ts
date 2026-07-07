@@ -37,7 +37,14 @@ export async function GET(
   return NextResponse.json({ conversation, messages: rows });
 }
 
-const patchSchema = z.object({ title: z.string().min(1).max(120) });
+const patchSchema = z
+  .object({
+    title: z.string().min(1).max(120).optional(),
+    pinned: z.boolean().optional(),
+  })
+  .refine((body) => body.title !== undefined || body.pinned !== undefined, {
+    message: "Nothing to update",
+  });
 
 export async function PATCH(
   req: Request,
@@ -50,14 +57,19 @@ export async function PATCH(
   if (!params.success) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
   const body = patchSchema.safeParse(await req.json().catch(() => null));
-  if (!body.success) return NextResponse.json({ error: "title is required" }, { status: 400 });
+  if (!body.success) {
+    return NextResponse.json({ error: "title or pinned is required" }, { status: 400 });
+  }
 
   const conversation = await ownedConversation(params.data.id, session.user.id);
   if (!conversation) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const [updated] = await db
     .update(conversations)
-    .set({ title: body.data.title })
+    .set({
+      ...(body.data.title !== undefined ? { title: body.data.title } : {}),
+      ...(body.data.pinned !== undefined ? { pinned: body.data.pinned } : {}),
+    })
     .where(eq(conversations.id, conversation.id))
     .returning();
 

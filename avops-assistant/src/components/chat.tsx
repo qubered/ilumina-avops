@@ -54,11 +54,14 @@ export function Chat({
             message: messages[messages.length - 1],
           },
         }),
+        // Resume-on-mount only applies to conversations that already exist,
+        // so the prop (stable per mount; pages key by conversation id) is
+        // the right capture here — not the mutable ref.
         prepareReconnectToStreamRequest: () => ({
-          api: `/api/chat?conversationId=${convIdRef.current}`,
+          api: `/api/chat?conversationId=${conversationId}`,
         }),
       }),
-    [],
+    [conversationId],
   );
 
   // The conversation was left mid-answer (last persisted message is the

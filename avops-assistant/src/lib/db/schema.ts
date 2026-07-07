@@ -28,6 +28,7 @@ export const conversations = pgTable(
     isWidget: boolean("is_widget").notNull().default(false),
     // Resumable-stream id while an answer is being generated (null when idle).
     activeStreamId: text("active_stream_id"),
+    pinned: boolean("pinned").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
