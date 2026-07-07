@@ -1,7 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth";
 import { db, user } from "@/lib/db";
-import { UserActions } from "@/components/user-actions";
+import { UserRow } from "@/components/user-row";
 
 export const dynamic = "force-dynamic";
 
@@ -62,41 +62,18 @@ export default async function AdminUsersPage() {
           </thead>
           <tbody>
             {rows.map((u) => (
-              <tr key={u.id} className={`border-b border-divider ${u.banned ? "opacity-60" : ""}`}>
-                <td className="py-2 pr-3">
-                  <p className="font-medium text-text">
-                    {u.name}
-                    {u.id === session.user.id && (
-                      <span className="ml-1.5 text-xs text-text-3">(you)</span>
-                    )}
-                  </p>
-                  <p className="text-xs text-text-3">{u.email}</p>
-                </td>
-                <td className="py-2 pr-3">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                      u.banned
-                        ? "bg-danger/10 text-danger"
-                        : u.role === "admin"
-                          ? "bg-accent/10 text-link"
-                          : "bg-canvas-2 text-text-2"
-                    }`}
-                  >
-                    {u.banned ? "suspended" : (u.role ?? "member")}
-                  </span>
-                </td>
-                <td className="py-2 pr-3 text-text-2">{u.conversationCount}</td>
-                <td className="py-2 pr-3 text-text-2">{formatDate(u.createdAt)}</td>
-                <td className="py-2 text-right">
-                  <UserActions
-                    userId={u.id}
-                    role={u.role ?? "member"}
-                    banned={Boolean(u.banned)}
-                    isSelf={u.id === session.user.id}
-                    isLastAdmin={u.role === "admin" && !u.banned && adminCount <= 1}
-                  />
-                </td>
-              </tr>
+              <UserRow
+                key={u.id}
+                userId={u.id}
+                name={u.name}
+                email={u.email}
+                role={u.role ?? "member"}
+                banned={Boolean(u.banned)}
+                isSelf={u.id === session.user.id}
+                isLastAdmin={u.role === "admin" && !u.banned && adminCount <= 1}
+                conversationCount={u.conversationCount}
+                joined={formatDate(u.createdAt)}
+              />
             ))}
           </tbody>
         </table>
