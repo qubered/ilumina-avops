@@ -65,6 +65,14 @@ cp .env.example .env               # fill everything in
 docker compose up -d --build
 ```
 
+**Hardware**: the full stack runs in ~2.5&nbsp;GB RAM and needs no GPU — the
+embedding model (`nomic-embed-text`, 137M params) is CPU-friendly and kept
+resident by `OLLAMA_KEEP_ALIVE=-1`. On an older CPU expect sub-second query
+embeddings and full syncs in minutes (they run nightly). The first
+`--build` compiles the Next.js app on the box and is the slowest step
+(one-time per deploy, ~5–15&nbsp;min on older hardware); build remotely and
+push an image if that ever grates.
+
 Both apps share a parent domain (`COOKIE_DOMAIN=.venue.example`) so the widget iframe inside Outline is authenticated. Because both hostnames are real public HTTPS URLs, all server-side cross-calls just use them: Outline's OIDC `token`/`userinfo` requests and its webhook delivery go through the tunnel — no `ALLOWED_PRIVATE_IP_ADDRESSES` / SSRF configuration needed (that's only a local-dev concern, see `docker/dev-outline.sh`). Chat streaming (SSE) passes through Cloudflare fine since tokens flow continuously; the assistant returns `202` immediately for long syncs, so nothing brushes against Cloudflare's ~100s idle limit.
 
 ### First run

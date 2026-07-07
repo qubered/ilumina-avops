@@ -58,6 +58,12 @@ services:
   # no rate limits. ollama-init pulls the model once at startup.
   ollama:
     image: ollama/ollama:latest
+    environment:
+      # Keep the embedding model resident (~0.7GB): on CPU-only boxes the
+      # default 5-minute unload adds a cold-start delay to the first
+      # question after a quiet period.
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
