@@ -28,6 +28,9 @@ docker run -d --name avops-dev-pg --restart unless-stopped -p 55432:5432 \
   -v avops-dev-pg:/var/lib/postgresql/data postgres:16
 docker run -d --name avops-dev-qdrant --restart unless-stopped -p 6333:6333 \
   -v avops-dev-qdrant:/qdrant/storage qdrant/qdrant
+docker run -d --name avops-dev-ollama --restart unless-stopped -p 11434:11434 \
+  -v avops-dev-ollama:/root/.ollama ollama/ollama
+docker exec avops-dev-ollama ollama pull nomic-embed-text
 ```
 
 ### 3. `.env`
@@ -47,8 +50,9 @@ CODEX_AUTO_REFRESH=true
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-5
 
-VOYAGE_API_KEY=<your key>    # dashboard.voyageai.com — keyless tier is 3 req/min
-VOYAGE_MODEL=voyage-3-large
+EMBEDDINGS_PROVIDER=ollama   # local + free; or "voyage" (+ VOYAGE_API_KEY)
+OLLAMA_URL=http://localhost:11434
+EMBEDDINGS_MODEL=nomic-embed-text
 
 QDRANT_URL=http://localhost:6333
 
@@ -151,7 +155,9 @@ is parsed into search payload fields).
 - **Codex tokens are per-machine and single-use on refresh.** The app writes
   rotated tokens back to `~/.codex/auth.json`; if auth breaks anyway, re-run
   `codex login`.
-- **Voyage keyless tier = 3 requests/min.** Syncs retry 429s automatically
-  but run slowly; add a payment method to lift it.
+- **Embeddings are local by default** (Ollama). Switching embedding models
+  changes vector dimensions — the Qdrant collection recreates itself, then
+  run Admin → Re-sync to re-index. If using `EMBEDDINGS_PROVIDER=voyage`,
+  the keyless tier is 3 requests/min (syncs back off on 429s, slowly).
 - The dev password convention on Jayden's machines is per-developer — first
   registered account is admin, so register before anyone else does.

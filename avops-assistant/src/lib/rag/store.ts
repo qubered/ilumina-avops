@@ -1,10 +1,10 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { randomUUID } from "node:crypto";
 import { env } from "../env";
+import { embeddingDim } from "./embeddings";
 import type { DocMetadata } from "./metadata";
 
 export const COLLECTION = "ilumina_kb";
-const VECTOR_SIZE = 1024;
 
 export type KbPayload = {
   text: string;
@@ -31,17 +31,30 @@ export function getQdrant(): QdrantClient {
 
 export async function ensureCollection(): Promise<void> {
   const qdrant = getQdrant();
+  const size = await embeddingDim();
   const { exists } = await qdrant.collectionExists(COLLECTION);
-  if (!exists) {
-    await qdrant.createCollection(COLLECTION, {
-      vectors: { size: VECTOR_SIZE, distance: "Cosine" },
-    });
-    await qdrant.createPayloadIndex(COLLECTION, {
-      field_name: "docId",
-      field_schema: "keyword",
-      wait: true,
-    });
+
+  if (exists) {
+    // Embedding models aren't interchangeable: if the configured model's
+    // dimension differs from the collection, the old vectors are useless.
+    // Recreate and let the next full sync re-index everything.
+    const info = await qdrant.getCollection(COLLECTION);
+    const current = (info.config.params.vectors as { size?: number })?.size;
+    if (current === size) return;
+    console.warn(
+      `[qdrant] embedding dimension changed (${current} → ${size}); recreating "${COLLECTION}" — run a full re-sync`,
+    );
+    await qdrant.deleteCollection(COLLECTION);
   }
+
+  await qdrant.createCollection(COLLECTION, {
+    vectors: { size, distance: "Cosine" },
+  });
+  await qdrant.createPayloadIndex(COLLECTION, {
+    field_name: "docId",
+    field_schema: "keyword",
+    wait: true,
+  });
 }
 
 export async function deleteDocPoints(docId: string): Promise<void> {

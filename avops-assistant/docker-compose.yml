@@ -54,6 +54,30 @@ services:
       - outline-data:/var/lib/outline/data
     restart: unless-stopped
 
+  # Local embeddings (default EMBEDDINGS_PROVIDER=ollama): free, private,
+  # no rate limits. ollama-init pulls the model once at startup.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull"]
+    command: ["${EMBEDDINGS_MODEL:-nomic-embed-text}"]
+    restart: "no"
+
   qdrant:
     image: qdrant/qdrant:latest
     volumes:
@@ -72,6 +96,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://avops:${AVOPS_DB_PASSWORD}@outline-postgres:5432/avops
       AUTH_SECRET: ${AUTH_SECRET}
@@ -86,7 +112,10 @@ services:
       CODEX_MODEL: ${CODEX_MODEL:-gpt-5.5}
       CODEX_HOME: /codex-auth
       CODEX_AUTO_REFRESH: ${CODEX_AUTO_REFRESH:-true}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-ollama}
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-nomic-embed-text}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-3-large}
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://outline-redis:6379/1
@@ -137,6 +166,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  ollama-data:
   postgres-data:
   outline-data:
   qdrant-data:

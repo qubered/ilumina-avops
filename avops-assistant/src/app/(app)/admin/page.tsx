@@ -63,7 +63,14 @@ export default async function AdminOverviewPage() {
         <dl className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 text-sm sm:grid-cols-2">
           <SystemRow label="Chat model" value={`${model} (${env.AI_PROVIDER})`} />
           <SystemRow label="Web search" value={env.AI_WEB_SEARCH ? "On" : "Off"} />
-          <SystemRow label="Embeddings" value={env.VOYAGE_MODEL} />
+          <SystemRow
+            label="Embeddings"
+            value={
+              env.EMBEDDINGS_PROVIDER === "ollama"
+                ? `${env.EMBEDDINGS_MODEL} (local)`
+                : `${env.VOYAGE_MODEL} (voyage)`
+            }
+          />
           <SystemRow
             label="Live answer resume"
             value={env.REDIS_URL ? "On (Redis)" : "Off — poll on return"}

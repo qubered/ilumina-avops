@@ -10,7 +10,7 @@ AI assistant for the ILUMINA venue AV crew (Harry The Hirer Productions). Answer
 
 ## Stack
 
-Next.js 16 (App Router, TypeScript, Turbopack) · Vercel AI SDK v7 + `@ai-sdk/anthropic` (`claude-sonnet-5`) · Voyage `voyage-3-large` embeddings (1024d) · Qdrant · Postgres + Drizzle ORM · Better Auth (+ OIDC provider plugin) · Tailwind CSS v4 · Vitest · Docker.
+Next.js 16 (App Router, TypeScript, Turbopack) · Vercel AI SDK v7 + `@ai-sdk/anthropic` (`claude-sonnet-5`) · local Ollama embeddings (`nomic-embed-text` default; Voyage API optional) · Qdrant · Postgres + Drizzle ORM · Better Auth (+ OIDC provider plugin) · Tailwind CSS v4 · Vitest · Docker.
 
 ## Repository layout
 
@@ -116,7 +116,7 @@ Codex backend quirks (all handled inside `model.ts`, live-verified including the
 - **Standard sampling/limit params are rejected** (`"Unsupported parameter: max_output_tokens"`); middleware strips `maxOutputTokens`/`temperature`/`topP`/penalties in codex mode.
 - The system prompt travels as the Responses API top-level `instructions` field (`systemPromptOptions()` picks the right shape per provider).
 
-Caveats for codex mode: it's the **unofficial ChatGPT backend** — outside OpenAI's intended use, may break without notice, and the whole crew shares one subscription's rate limits. Embeddings are not covered by any of this: `VOYAGE_API_KEY` is always required. For a business deployment the API-key providers are the safe options.
+Caveats for codex mode: it's the **unofficial ChatGPT backend** — outside OpenAI's intended use, may break without notice, and the whole crew shares one subscription's rate limits. Embeddings aren't covered by any of this either — the default local Ollama embeddings keep the stack subscription-only. For a business deployment the API-key chat providers are the safe options.
 
 ## How answers are produced
 

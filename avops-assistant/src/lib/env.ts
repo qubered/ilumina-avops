@@ -33,7 +33,12 @@ const envSchema = z
       .optional()
       .default("")
       .transform((v) => v === "true"),
-    VOYAGE_API_KEY: z.string().min(1),
+    // Embeddings: "ollama" (default) runs a local model — no paid service,
+    // no rate limits. "voyage" uses the Voyage API (needs VOYAGE_API_KEY).
+    EMBEDDINGS_PROVIDER: z.enum(["ollama", "voyage"]).default("ollama"),
+    OLLAMA_URL: z.string().url().default("http://localhost:11434"),
+    EMBEDDINGS_MODEL: z.string().default("nomic-embed-text"),
+    VOYAGE_API_KEY: z.string().optional().default(""),
     VOYAGE_MODEL: z.string().default("voyage-3-large"),
     QDRANT_URL: z.string().url().default("http://localhost:6333"),
     // When set, in-flight answers are resumable across tab close / reconnect
@@ -61,6 +66,13 @@ const envSchema = z
         code: "custom",
         path: ["OPENAI_API_KEY"],
         message: "required when AI_PROVIDER=openai",
+      });
+    }
+    if (env.EMBEDDINGS_PROVIDER === "voyage" && !env.VOYAGE_API_KEY) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["VOYAGE_API_KEY"],
+        message: "required when EMBEDDINGS_PROVIDER=voyage",
       });
     }
     // codex mode needs no env secrets — ~/.codex/auth.json is read at
