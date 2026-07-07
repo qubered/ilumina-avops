@@ -58,7 +58,9 @@ Public access is via a **Cloudflare Tunnel** — outbound-only, no ports exposed
 2. Add two public hostnames on the tunnel:
    - `kb.venue.example` → `http://nginx:80` (Outline, with the widget script injected)
    - `assistant.venue.example` → `http://assistant:3000`
-3. Update the `sub_filter` URL in `docker/nginx.conf` to your assistant hostname.
+
+The widget-injection nginx renders its config from `docker/nginx.conf.template`
+at startup, filling the script URL from `APP_URL` — nothing to hand-edit.
 
 ```bash
 cp .env.example .env               # fill everything in
@@ -92,18 +94,18 @@ Better Auth's OIDC provider plugin exposes standard endpoints under `/api/auth/o
 
 ### Widget injection into Outline
 
-nginx rewrites every Outline HTML response to load the embed script:
+The `nginx` service ([`docker/nginx.conf.template`](docker/nginx.conf.template)) proxies Outline and rewrites every HTML response to load the embed script (`${APP_URL}` filled in at startup):
 
 ```nginx
-location / {
-  proxy_pass http://outline:3000;
-  sub_filter '</body>' '<script src="https://assistant.venue.example/widget.js" defer></script></body>';
-  sub_filter_once on;
-  proxy_set_header Accept-Encoding "";   # sub_filter needs uncompressed HTML
-}
+sub_filter '</body>' '<script src="${APP_URL}/widget.js" defer></script></body>';
+sub_filter_once on;
+proxy_set_header Accept-Encoding "";      # sub_filter needs uncompressed HTML
+proxy_hide_header Content-Security-Policy; # Outline's CSP would block the cross-origin script + iframe
 ```
 
-`widget.js` (served by this app, no dependencies, everything namespaced `avops-*`) adds a floating bubble that toggles a 380×560 iframe pointed at `/widget` — the compact chat UI backed by the user's single rolling widget conversation. `/widget` sends `Content-Security-Policy: frame-ancestors 'self' {OUTLINE_URL}` instead of `X-Frame-Options: DENY`.
+`widget.js` (served by this app, no dependencies, everything namespaced `avops-*`) adds a floating bubble that toggles a 380×560 iframe pointed at `/widget` — the compact chat UI backed by the user's single rolling widget conversation. `/widget` sends `Content-Security-Policy: frame-ancestors 'self' {OUTLINE_URL}` so Outline can embed it.
+
+**Why drop Outline's CSP?** Outline sends a strict `Content-Security-Policy` whose `script-src`/`frame-src` don't include the assistant origin, so without this the injected script and iframe are silently blocked by the browser. Dropping it at the proxy is the pragmatic fix for an internal, authenticated wiki; if you'd rather keep Outline's CSP, replace the `proxy_hide_header` line with a rewritten policy that adds `${APP_URL}` to `script-src` and `frame-src`.
 
 ## AI providers — including Codex (ChatGPT subscription) auth
 

@@ -152,8 +152,13 @@ services:
     depends_on:
       - outline
       - assistant
+    environment:
+      # ${APP_URL} in the template becomes the widget script origin.
+      # The filter keeps envsubst from touching nginx's own $variables.
+      APP_URL: ${APP_URL}
+      NGINX_ENVSUBST_FILTER: APP_URL
     volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     restart: unless-stopped
 
   # Public access via Cloudflare Tunnel (outbound-only; nothing listens on

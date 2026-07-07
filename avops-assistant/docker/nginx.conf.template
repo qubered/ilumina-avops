@@ -1,0 +1,42 @@
+# Widget-injection layer for Outline (behind the Cloudflare Tunnel).
+#
+# Rendered from this template at container start: ${APP_URL} is substituted
+# by the nginx image's envsubst. NGINX_ENVSUBST_FILTER limits substitution to
+# APP_URL so nginx's own $variables ($host, $http_upgrade, …) are left intact.
+#
+# TLS and public exposure are handled by Cloudflare — the tunnel's ingress
+# sends the KB hostname here over the compose network. The assistant is NOT
+# proxied here; the tunnel routes the assistant hostname straight to
+# http://assistant:3000.
+
+server {
+    listen 80;
+    server_name _;
+
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://outline:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Cloudflare terminated TLS; keep the original scheme for Outline.
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        # Websockets (Outline live collaboration)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Inject the AV Ops chat widget script into every Outline page.
+        sub_filter '</body>' '<script src="${APP_URL}/widget.js" defer></script></body>';
+        sub_filter_once on;
+        proxy_set_header Accept-Encoding "";   # sub_filter needs uncompressed HTML
+
+        # Outline sends a strict Content-Security-Policy that blocks the
+        # cross-origin widget script and its iframe. Drop it so the widget
+        # loads. Acceptable for an internal, authenticated wiki with trusted
+        # authors; to keep Outline's CSP instead, replace this line with a
+        # rewritten policy that adds ${APP_URL} to script-src and frame-src.
+        proxy_hide_header Content-Security-Policy;
+    }
+}
