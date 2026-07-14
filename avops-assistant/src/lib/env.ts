@@ -37,7 +37,10 @@ const envSchema = z
       .default("")
       .transform((v) => v === "true"),
     OPENROUTER_API_KEY: z.string().optional().default(""),
-    OPENROUTER_MODEL: z.string().default("meta-llama/llama-3.3-70b-instruct:free"),
+    // "openrouter/free" = OpenRouter's Free Models Router: picks a random
+    // free, tool-capable model per request. Pin a specific slug for
+    // consistency (e.g. meta-llama/llama-3.3-70b-instruct:free).
+    OPENROUTER_MODEL: z.string().default("openrouter/free"),
     // Embeddings: "ollama" (default) runs a local model — no paid service,
     // no rate limits. "voyage" uses the Voyage API (needs VOYAGE_API_KEY).
     EMBEDDINGS_PROVIDER: z.enum(["ollama", "voyage"]).default("ollama"),

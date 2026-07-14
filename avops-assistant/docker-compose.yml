@@ -120,7 +120,7 @@ services:
       CODEX_HOME: /codex-auth
       CODEX_AUTO_REFRESH: ${CODEX_AUTO_REFRESH:-true}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
       EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-ollama}
       OLLAMA_URL: http://ollama:11434
       EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-nomic-embed-text}
