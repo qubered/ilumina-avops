@@ -7,6 +7,7 @@ AI assistant for the ILUMINA venue AV crew (Harry The Hirer Productions). Answer
 - **KB sync** — full sync from Outline's API (published, non-template, non-archived docs only), instant re-index via HMAC-verified webhooks, nightly 04:00 Australia/Sydney cron backstop.
 - **Admin** — sync status, per-doc errors, re-sync button, feedback review, KB-gap candidates.
 - **Widget** — `widget.js` injects a chat bubble into Outline via nginx `sub_filter`; the panel iframes `/widget` (CSP `frame-ancestors`, cross-subdomain cookies).
+- **SharePoint ingestion** — a separate `ingest` service (see [`../ingest`](../ingest)) takes base64 files from a Power Automate flow, AI-normalises each into a KB article with attachments, and publishes into Outline (indexed automatically via the webhook).
 
 ## Stack
 

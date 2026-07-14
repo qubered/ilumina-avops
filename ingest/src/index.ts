@@ -1,0 +1,191 @@
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { z } from "zod";
+import { env } from "./env.js";
+import { extract } from "./extract.js";
+import { normalise } from "./normalise.js";
+import {
+  createDocument,
+  ensureCollection,
+  listCollections,
+  updateDocument,
+  uploadAttachment,
+} from "./outline.js";
+import { getImport, hashContent, initStore, upsertImport } from "./store.js";
+
+const bodySchema = z.object({
+  fileName: z.string().min(1),
+  contentType: z.string().default("application/octet-stream"),
+  contentBase64: z.string().min(1),
+  sourceId: z.string().min(1), // SharePoint unique id — the idempotency key
+  sourceUrl: z.string().optional(),
+  folderPath: z.string().optional(),
+});
+
+const app = new Hono();
+
+app.get("/health", (c) => c.json({ ok: true }));
+
+// Bearer auth for everything below.
+app.use("/ingest", async (c, next) => {
+  const auth = c.req.header("authorization") ?? "";
+  const token = auth.replace(/^Bearer\s+/i, "");
+  if (token !== env.INGEST_API_KEY) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+});
+
+app.post("/ingest", async (c) => {
+  const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
+  }
+  const input = parsed.data;
+
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(input.contentBase64, "base64");
+  } catch {
+    return c.json({ error: "contentBase64 is not valid base64" }, 400);
+  }
+  if (buffer.length === 0) return c.json({ error: "Empty file" }, 400);
+
+  const contentHash = hashContent(buffer);
+
+  try {
+    // Skip work if this exact file version was already imported.
+    const existing = await getImport(input.sourceId);
+    if (existing && existing.contentHash === contentHash) {
+      return c.json({
+        action: "skipped",
+        reason: "unchanged",
+        outlineDocumentId: existing.outlineDocumentId,
+      });
+    }
+
+    // 1. Extract markdown + images from the raw file.
+    const extraction = await extract(input.fileName, input.contentType, buffer);
+
+    // 2. AI-normalise into a KB article + route into a collection.
+    const collections = await listCollections();
+    const article = await normalise({
+      fileName: input.fileName,
+      folderPath: input.folderPath,
+      markdown: extraction.markdown,
+      collections: collections.map((col) => col.name),
+      imageTokens: extraction.images.map((img) => img.token),
+    });
+
+    const collection = await ensureCollection(article.collectionName || env.INGEST_DEFAULT_COLLECTION);
+
+    // 3. Create (or reuse) the Outline document so attachments have a home.
+    let docId = existing?.outlineDocumentId ?? null;
+    if (!docId) {
+      const created = await createDocument({
+        title: article.title,
+        text: buildBody(article, "", input.sourceUrl),
+        collectionId: collection.id,
+        publish: true,
+      });
+      docId = created.id;
+    }
+
+    // 4. Upload images + the original file, swap tokens for attachment URLs.
+    let body = extraction.markdown;
+    for (const image of extraction.images) {
+      const uploaded = await uploadAttachment({
+        documentId: docId,
+        name: image.name,
+        contentType: image.contentType,
+        data: image.data,
+      });
+      body = body.split(image.token).join(uploaded.url);
+    }
+    const original = await uploadAttachment({
+      documentId: docId,
+      name: input.fileName,
+      contentType: input.contentType,
+      data: buffer,
+    });
+
+    // 5. Assemble the final article and update+publish.
+    const articleWithBody: typeof article = { ...article, bodyMarkdown: mergeBody(article.bodyMarkdown, body, extraction.kind) };
+    const finalText = buildBody(articleWithBody, `📎 Original file: [${input.fileName}](${original.url})`, input.sourceUrl);
+
+    const doc = await updateDocument({
+      id: docId,
+      title: article.title,
+      text: finalText,
+      publish: true,
+    });
+
+    await upsertImport({
+      sourceId: input.sourceId,
+      outlineDocumentId: doc.id,
+      title: doc.title,
+      contentHash,
+    });
+
+    return c.json({
+      action: existing ? "updated" : "created",
+      outlineDocumentId: doc.id,
+      url: doc.url,
+      collection: collection.name,
+    });
+  } catch (err) {
+    console.error("[ingest] failed:", err);
+    return c.json(
+      { error: err instanceof Error ? err.message : "Ingestion failed" },
+      500,
+    );
+  }
+});
+
+/**
+ * The AI returns a cleaned body without images; the extractor's body has the
+ * images in place. Prefer the AI's structure but keep the image references:
+ * if the AI body dropped the image tokens, append the image-bearing body.
+ */
+function mergeBody(aiBody: string, imageBody: string, kind: string): string {
+  if (kind === "image") return imageBody; // the image IS the content
+  const hasAttachments = /\/api\/attachments\.redirect\?id=/.test(aiBody);
+  if (hasAttachments || !/\/api\/attachments\.redirect\?id=/.test(imageBody)) return aiBody;
+  return `${aiBody}\n\n${imageBody}`;
+}
+
+/** Prepend the RAG metadata lines and append footer links. */
+function buildBody(
+  article: { zone: string; system: string; docType: string; bodyMarkdown: string },
+  footer: string,
+  sourceUrl?: string,
+): string {
+  // Blank lines (separate paragraphs) between metadata lines: Outline's
+  // ProseMirror round-trip collapses single-newline-separated lines onto one
+  // line, which would break the assistant's leading Zone/System/Type parser.
+  const meta = [
+    article.zone && article.zone !== "N/A" ? `Zone: ${article.zone}` : "",
+    article.system && article.system !== "N/A" ? `System: ${article.system}` : "",
+    article.docType && article.docType !== "N/A" ? `Type: ${article.docType}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const footerLines = [
+    footer,
+    sourceUrl ? `[View source in SharePoint](${sourceUrl})` : "",
+  ].filter(Boolean);
+
+  return [
+    meta,
+    article.bodyMarkdown.trim(),
+    footerLines.length ? `---\n\n${footerLines.join(" · ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+await initStore();
+serve({ fetch: app.fetch, port: env.PORT }, (info) => {
+  console.log(`[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER})`);
+});

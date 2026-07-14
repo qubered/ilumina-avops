@@ -151,6 +151,35 @@ services:
     # a shared refresh token breaks whichever device refreshes second.
     restart: unless-stopped
 
+  # SharePoint → Outline ingestion service. Power Automate POSTs base64 file
+  # contents to it; it AI-normalises each into a KB article (with attachments)
+  # and publishes into Outline, where the assistant's webhook indexes it.
+  # Reach it via the tunnel (ingest.<domain> → http://ingest:8080) or keep it
+  # internal-only and point Power Automate at a tunnel hostname you add.
+  ingest:
+    build: ../ingest
+    depends_on:
+      outline-postgres:
+        condition: service_healthy
+    environment:
+      INGEST_API_KEY: ${INGEST_API_KEY}
+      OUTLINE_URL: ${OUTLINE_URL}
+      OUTLINE_API_KEY: ${OUTLINE_API_KEY}
+      DATABASE_URL: postgres://avops:${AVOPS_DB_PASSWORD}@outline-postgres:5432/avops
+      # Ingestion is a harder task than chat — default to a capable model,
+      # independent of the assistant's chat model.
+      INGEST_AI_PROVIDER: ${INGEST_AI_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${INGEST_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${INGEST_MODEL:-gpt-4o}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      INGEST_DEFAULT_COLLECTION: ${INGEST_DEFAULT_COLLECTION:-Imported}
+      APP_URL: ${APP_URL}
+    restart: unless-stopped
+
   # Widget-injection layer only: sub_filter adds the chat bubble script to
   # every Outline page. No published ports and no TLS — the Cloudflare
   # tunnel terminates TLS at the edge and reaches this over the compose
