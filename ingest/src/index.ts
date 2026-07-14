@@ -1,3 +1,4 @@
+import "./preload.js"; // must run before @ai-sdk/openai loads — see preload.ts
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { z } from "zod";
