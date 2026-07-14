@@ -9,10 +9,13 @@ const envSchema = z
     // empty to allow open registration.
     SIGNUP_KEY: z.string().optional().default(""),
     // Chat model backend (see src/lib/rag/model.ts):
-    //   anthropic — Anthropic API (default)
-    //   openai    — OpenAI or any OpenAI-compatible endpoint, with an API key
-    //   codex     — the Codex CLI's ChatGPT subscription login (~/.codex/auth.json)
-    AI_PROVIDER: z.enum(["anthropic", "openai", "codex"]).default("anthropic"),
+    //   anthropic  — Anthropic API (default)
+    //   openai     — OpenAI Responses API (or a Responses-compatible endpoint)
+    //   codex      — the Codex CLI's ChatGPT subscription login (~/.codex/auth.json)
+    //   openrouter — OpenRouter (Chat Completions); free models available
+    AI_PROVIDER: z
+      .enum(["anthropic", "openai", "codex", "openrouter"])
+      .default("anthropic"),
     // Provider-executed web search for general equipment/manufacturer info
     // (the KB stays the only authority for venue-specific facts).
     AI_WEB_SEARCH: z
@@ -33,6 +36,8 @@ const envSchema = z
       .optional()
       .default("")
       .transform((v) => v === "true"),
+    OPENROUTER_API_KEY: z.string().optional().default(""),
+    OPENROUTER_MODEL: z.string().default("meta-llama/llama-3.3-70b-instruct:free"),
     // Embeddings: "ollama" (default) runs a local model — no paid service,
     // no rate limits. "voyage" uses the Voyage API (needs VOYAGE_API_KEY).
     EMBEDDINGS_PROVIDER: z.enum(["ollama", "voyage"]).default("ollama"),
@@ -66,6 +71,13 @@ const envSchema = z
         code: "custom",
         path: ["OPENAI_API_KEY"],
         message: "required when AI_PROVIDER=openai",
+      });
+    }
+    if (env.AI_PROVIDER === "openrouter" && !env.OPENROUTER_API_KEY) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["OPENROUTER_API_KEY"],
+        message: "required when AI_PROVIDER=openrouter (get one at openrouter.ai/keys)",
       });
     }
     if (env.EMBEDDINGS_PROVIDER === "voyage" && !env.VOYAGE_API_KEY) {

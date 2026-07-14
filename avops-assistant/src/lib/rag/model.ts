@@ -176,6 +176,24 @@ export type ChatStack = {
  * the provider is misconfigured (callers surface it as a 503, never a hang).
  */
 export async function getChatStack(): Promise<ChatStack> {
+  // OpenRouter: OpenAI-compatible, but the Chat Completions dialect (.chat),
+  // not the Responses API. No provider-executed web search (that's
+  // Responses-only) — kb_search still grounds every answer. The system
+  // prompt goes as a normal message via systemPromptOptions().
+  if (env.AI_PROVIDER === "openrouter") {
+    const openrouter = createOpenAI({
+      name: "openrouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: env.OPENROUTER_API_KEY,
+      headers: {
+        // Optional attribution shown on the OpenRouter dashboard.
+        "HTTP-Referer": env.APP_URL,
+        "X-Title": "ILUMINA AV Ops",
+      },
+    });
+    return { model: openrouter.chat(env.OPENROUTER_MODEL), providerTools: {} };
+  }
+
   if (env.AI_PROVIDER === "codex" || env.AI_PROVIDER === "openai") {
     const openai =
       env.AI_PROVIDER === "codex"

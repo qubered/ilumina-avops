@@ -51,7 +51,9 @@ export default async function AdminOverviewPage() {
       ? env.CODEX_MODEL
       : env.AI_PROVIDER === "openai"
         ? env.OPENAI_MODEL
-        : env.ANTHROPIC_MODEL;
+        : env.AI_PROVIDER === "openrouter"
+          ? env.OPENROUTER_MODEL
+          : env.ANTHROPIC_MODEL;
 
   return (
     <div className="pb-12">
