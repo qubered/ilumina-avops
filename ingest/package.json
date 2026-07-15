@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "probe:outline": "tsx scripts/outline-roundtrip-probe.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.14",
