@@ -112,7 +112,8 @@ def send(path: Path, root: Path, args: argparse.Namespace) -> bool:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.post(args.url, json=payload, headers=headers, timeout=180)
+            # Generous timeout: the server may wait out provider rate limits.
+            resp = requests.post(args.url, json=payload, headers=headers, timeout=300)
         except requests.RequestException as e:
             log(f"RETRY {rel} (network error: {e}) [{attempt}/{MAX_RETRIES}]")
             time.sleep(min(30, 3 * attempt))
