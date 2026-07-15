@@ -50,7 +50,7 @@ def config() -> argparse.Namespace:
     p.add_argument("--key", default=os.environ.get("INGEST_API_KEY"), help="INGEST_API_KEY bearer token")
     p.add_argument("--interval", type=float, default=float(os.environ.get("POLL_INTERVAL", "5")), help="Seconds between scans")
     p.add_argument("--stable-seconds", type=float, default=float(os.environ.get("STABLE_SECONDS", "5")), help="A file must be untouched this long before sending")
-    p.add_argument("--max-mb", type=float, default=float(os.environ.get("MAX_MB", "40")), help="Skip files larger than this")
+    p.add_argument("--max-mb", type=float, default=float(os.environ.get("MAX_MB", "95")), help="Skip files larger than this (stay under the ~100 MB tunnel/Outline ceiling)")
     p.add_argument("--once", action="store_true", help="Process current files and exit")
     args = p.parse_args()
     missing = [n for n, v in (("--folder/WATCH_FOLDER", args.folder), ("--url/INGEST_URL", args.url), ("--key/INGEST_API_KEY", args.key)) if not v]

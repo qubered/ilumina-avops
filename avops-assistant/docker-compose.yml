@@ -41,6 +41,11 @@ services:
       REDIS_URL: redis://outline-redis:6379
       FILE_STORAGE: local
       FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data
+      # Max attachment/upload size in bytes. Default ~100 MB (up from
+      # Outline's low default). Note: uploads reach Outline through the
+      # Cloudflare tunnel, which caps request bodies at 100 MB on the free
+      # plan — that's the real ceiling regardless of this value.
+      FILE_STORAGE_UPLOAD_MAX_SIZE: ${OUTLINE_MAX_UPLOAD_SIZE:-104857600}
       # --- SSO via the assistant app (it is the OIDC identity provider) ---
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
