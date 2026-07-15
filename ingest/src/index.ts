@@ -13,6 +13,9 @@ import {
   uploadAttachment,
 } from "./outline.js";
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
+import type { MiddlewareHandler } from "hono";
+import { initMortSchema } from "./mort/schema.js";
+import { appendJournal, enqueueReview, getSource, tombstoneSource } from "./mort/memory.js";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
@@ -27,15 +30,18 @@ const app = new Hono();
 
 app.get("/health", (c) => c.json({ ok: true }));
 
-// Bearer auth for everything below.
-app.use("/ingest", async (c, next) => {
+// Bearer auth for the ingest routes. (`app.use` matches the exact path, so each
+// route is listed explicitly.)
+const requireIngestAuth: MiddlewareHandler = async (c, next) => {
   const auth = c.req.header("authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "");
   if (token !== env.INGEST_API_KEY) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   await next();
-});
+};
+app.use("/ingest", requireIngestAuth);
+app.use("/ingest/delete", requireIngestAuth);
 
 app.post("/ingest", async (c) => {
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
@@ -143,6 +149,42 @@ app.post("/ingest", async (c) => {
   }
 });
 
+// Deletion signal from the watcher (a file vanished from the OneDrive folder).
+// FAIL-CLOSED (v1): never auto-purge — record a tombstone for human review and
+// mark the source. A paused/offline sync makes present files look deleted, so a
+// human confirms before anything is removed. (MORT_PLAN.md §v1.1 / §20.3)
+const deleteSchema = z.object({
+  sourceId: z.string().min(1),
+  op: z.string().optional(),
+});
+
+app.post("/ingest/delete", async (c) => {
+  const parsed = deleteSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
+  }
+  const { sourceId } = parsed.data;
+  try {
+    const src = await getSource(sourceId);
+    const queued = await enqueueReview({
+      action: "tombstone",
+      sourceId,
+      rationale: `Source '${sourceId}' disappeared from the watch folder — review before removing its KB content.`,
+      dedupeKey: `tombstone:${sourceId}`,
+    });
+    await tombstoneSource(sourceId);
+    await appendJournal({
+      sourceId,
+      action: "tombstone_proposed",
+      rationale: queued ? "queued for review" : "already queued",
+    });
+    return c.json({ action: "tombstoned", review: true, queued, knownRole: src?.role ?? null }, 202);
+  } catch (err) {
+    console.error("[ingest/delete] failed:", err);
+    return c.json({ error: err instanceof Error ? err.message : "Delete failed" }, 500);
+  }
+});
+
 /**
  * The AI returns a cleaned body without images; the extractor's body has the
  * images in place. Prefer the AI's structure but keep the image references:
@@ -187,6 +229,7 @@ function buildBody(
 }
 
 await initStore();
+await initMortSchema();
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(`[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER})`);
 });
