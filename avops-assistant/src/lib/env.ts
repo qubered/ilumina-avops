@@ -55,6 +55,9 @@ const envSchema = z
     OUTLINE_URL: z.string().url(),
     OUTLINE_API_KEY: z.string().min(1),
     OUTLINE_WEBHOOK_SECRET: z.string().min(1),
+    // Shared secret for internal service-to-service calls (Mort ingest → this
+    // app's /api/internal/*). Empty = the internal endpoints refuse all callers.
+    INTERNAL_API_KEY: z.string().optional().default(""),
     APP_URL: z.string().url().default("http://localhost:3000"),
     // OIDC client credentials for Outline SSO (this app is the identity
     // provider). When both are set, Outline is registered as a trusted client.
