@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/mort/*.test.ts",
-    "probe:outline": "tsx scripts/outline-roundtrip-probe.ts"
+    "probe:outline": "tsx scripts/outline-roundtrip-probe.ts",
+    "smoke:writer": "tsx scripts/writer-smoke.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.14",
