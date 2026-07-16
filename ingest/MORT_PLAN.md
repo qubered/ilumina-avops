@@ -98,13 +98,16 @@ Per file, **not** a multi-step agent loop:
   docs are ground truth, reference files attach rather than transcribe.
 
 ### v1.4 — Safe writes (VERIFY the mechanism first)
-- **STEP 0, before building:** empirically round-trip a doc with a comment marker + a
-  table + `Key: value` lines through `documents.update` → `documents.info` and diff the
-  returned `text`. Outline's ProseMirror likely **drops HTML comments and normalises
-  whitespace**. If markers don't survive, delimit Mort's region with a **real heading**
-  (`## Mort — maintained section`) and a sentinel; splice by heading and re-serialize.
-  Byte-equality outside the region is impossible (ProseMirror normalises) → the
-  guarantee is **structural (heading boundaries)**, not textual.
+- **STEP 0 — DONE (2026-07-16, verified against live Outline).** The probe
+  (`scripts/outline-roundtrip-probe.ts`) round-tripped a doc through
+  `documents.create` → `documents.info`. **VERDICT: `<!-- mort:start/end -->` HTML
+  comment markers SURVIVE** (along with heading, `Key: value` lines, tables, escaped
+  pipes, ordered lists). So Mort fences his region with the comment markers as
+  originally designed. Observed normalisation to design around: ProseMirror
+  blank-line-separates every line (the `Key: value` header must use blank lines — it
+  does), and re-pads tables — so **byte-equality outside the region is impossible**;
+  the writer reads current text, **splices only between the markers**, and passes human
+  content through **as-read** (already normalised → re-normalisation is idempotent).
 - Mort writes **only inside his region**; human content outside is untouched. Structural
   edits / overwrites / deletes → review.
 - **Per-`target_doc_id` AND per-`source_id` advisory locks** + **revision CAS** (re-read
@@ -202,8 +205,11 @@ Lighting" → decision `ATTACH` under a Show-files section + `UPDATE_ADDITIVE` a
 file. (If no confident target exists yet, → review, not a speculative page.)
 
 ### C. Superseded assumptions (why they were dropped)
-- **Byte-for-byte non-destructive marker** → ProseMirror drops comments/normalises text;
-  replaced with heading-boundary structural guard (v1.4), pending the STEP-0 test.
+- **Byte-for-byte non-destructive marker** → STEP-0 test (2026-07-16, live Outline)
+  shows Outline KEEPS `<!-- mort:start/end -->` markers, so the comment-fenced region
+  stands. But ProseMirror still normalises whitespace/tables doc-wide, so byte-equality
+  outside the region is impossible → the guard is **splice-within-markers + pass human
+  content through as-read**, not textual diffing.
 - **Most-recent-wins** → `updatedAt` is polluted by Mort's own edits and compares specs vs
   one-off actions; replaced with present-both + current-state model (R1).
 - **Semantic placement in v1** → conflicts with path-identity/dedup; folder-mirror in v1,
