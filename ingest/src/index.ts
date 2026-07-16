@@ -15,15 +15,20 @@ import {
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
 import type { MiddlewareHandler } from "hono";
 import { initMortSchema } from "./mort/schema.js";
-import { appendJournal, enqueueReview, getSource, tombstoneSource } from "./mort/memory.js";
+import { appendJournal, enqueueReview, getSource, renameSource, tombstoneSource } from "./mort/memory.js";
+import { enqueueTurn, initWorker } from "./mort/worker.js";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
   contentType: z.string().default("application/octet-stream"),
   contentBase64: z.string().min(1),
-  sourceId: z.string().min(1), // SharePoint unique id — the idempotency key
+  sourceId: z.string().min(1), // watcher rel path — the idempotency key
   sourceUrl: z.string().optional(),
   folderPath: z.string().optional(),
+  // Mort watcher ops (v1.1). "move" carries the previous path so Mort rebinds
+  // the source instead of treating a rename as delete+create.
+  op: z.enum(["upsert", "move"]).optional(),
+  oldSourceId: z.string().optional(),
 });
 
 const app = new Hono();
@@ -59,6 +64,25 @@ app.post("/ingest", async (c) => {
   if (buffer.length === 0) return c.json({ error: "Empty file" }, 400);
 
   const contentHash = hashContent(buffer);
+
+  // Mort authoring path (v1.3). When enabled, /ingest enqueues an async turn and
+  // returns 202; the legacy one-file-one-article flow below runs only when
+  // MORT_MODE=off, so existing deployments are unchanged until they opt in.
+  if (env.MORT_MODE !== "off") {
+    if (input.op === "move" && input.oldSourceId) {
+      await renameSource(input.oldSourceId, input.sourceId);
+      return c.json({ action: "moved", from: input.oldSourceId, to: input.sourceId }, 202);
+    }
+    enqueueTurn({
+      sourceId: input.sourceId,
+      fileName: input.fileName,
+      contentType: input.contentType,
+      folderPath: input.folderPath,
+      contentHash,
+      buffer,
+    });
+    return c.json({ action: "queued", mode: env.MORT_MODE }, 202);
+  }
 
   try {
     // Skip work if this exact file version was already imported.
@@ -230,6 +254,9 @@ function buildBody(
 
 await initStore();
 await initMortSchema();
+if (env.MORT_MODE !== "off") await initWorker();
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-  console.log(`[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER})`);
+  console.log(
+    `[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER}, Mort: ${env.MORT_MODE})`,
+  );
 });

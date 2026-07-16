@@ -31,6 +31,12 @@ const schema = z
     // runs without KB context (graceful degradation, never a hard failure).
     ASSISTANT_KB_URL: z.string().optional().default(""),
     INTERNAL_API_KEY: z.string().optional().default(""),
+
+    // Mort authoring mode. off = legacy one-file-one-article pipeline (unchanged).
+    // shadow = Mort decides but only PROPOSES to the review queue (no live writes).
+    // live = Mort executes confident create/update; everything else → review.
+    MORT_MODE: z.enum(["off", "shadow", "live"]).default("off"),
+    MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   })
   .superRefine((env, ctx) => {
     const need = (cond: boolean, path: string, message: string) => {
