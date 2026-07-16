@@ -5,6 +5,7 @@ import {
   deleteDocument,
   ensureCollection,
   getDocument,
+  uploadAttachment,
 } from "../outline.js";
 import { decide } from "./decide.js";
 import { kbSearch } from "./kbclient.js";
@@ -12,12 +13,15 @@ import {
   addRelation,
   appendJournal,
   claimDoc,
+  deleteBlob,
   enqueueReview,
   findDocByRegistryKey,
+  findMortIdByOutlineId,
+  getBlob,
   recordDocState,
   registryKey,
 } from "./memory.js";
-import { spliceMortRegion } from "./region.js";
+import { appendToFilesSection, extractMortRegion, spliceMortRegion } from "./region.js";
 import { metaField, slugify } from "./textutil.js";
 import type { TurnDeps } from "./turn.js";
 import { writeMortRegion } from "./writer.js";
@@ -98,6 +102,24 @@ export function buildTurnDeps(selfUserId: string | null): TurnDeps {
       await writeMortRegion(docId, regionBody, selfUserId);
     },
     createDoc: (args) => createOrUpdateDoc(args, selfUserId),
+    attachFile: async (docId, sourceId) => {
+      const blob = await getBlob(sourceId);
+      if (!blob) throw new Error(`no stored bytes for '${sourceId}' to attach`);
+      const uploaded = await uploadAttachment({
+        documentId: docId,
+        name: blob.fileName,
+        contentType: blob.contentType,
+        data: blob.data,
+      });
+      // Add the file link additively under Mort's Files section (non-destructive).
+      const doc = await getDocument(docId);
+      const region = extractMortRegion(doc.text) ?? "";
+      const line = `- [${blob.fileName}](${uploaded.url})`;
+      await writeMortRegion(docId, appendToFilesSection(region, line), selfUserId);
+      const mortId = await findMortIdByOutlineId(docId);
+      if (mortId) await addRelation(sourceId, mortId, "attached");
+      await deleteBlob(sourceId);
+    },
     enqueueReview: (item) =>
       enqueueReview({
         action: item.action,

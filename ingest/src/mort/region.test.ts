@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   MORT_END,
   MORT_START,
+  appendToFilesSection,
   extractMortRegion,
   hasMortRegion,
   isMalformedRegion,
@@ -65,4 +66,18 @@ test("end-before-start is malformed, not a valid region", () => {
 test("mortBody is trimmed inside the region", () => {
   const out = spliceMortRegion("", "\n\n  padded body  \n\n");
   assert.equal(extractMortRegion(out), "padded body");
+});
+
+test("appendToFilesSection creates the heading, then appends under it, dedup", () => {
+  const line1 = "- [MainStage_v4.show.gz](/api/attachments.redirect?id=abc)";
+  const line2 = "- [MainStage_v5.show.gz](/api/attachments.redirect?id=def)";
+  let region = "Zone: Main Stage\n\nSystem: Lighting";
+  region = appendToFilesSection(region, line1);
+  assert.ok(region.includes("## Files"));
+  assert.ok(region.includes(line1));
+  region = appendToFilesSection(region, line2);
+  assert.equal(region.split("## Files").length - 1, 1, "only one Files heading");
+  assert.ok(region.includes(line2));
+  const again = appendToFilesSection(region, line1);
+  assert.equal(again.split(line1).length - 1, 1, "no duplicate line");
 });

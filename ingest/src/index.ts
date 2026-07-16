@@ -17,6 +17,7 @@ import type { MiddlewareHandler } from "hono";
 import { initMortSchema } from "./mort/schema.js";
 import {
   appendJournal,
+  deleteBlob,
   enqueueReview,
   getReviewItem,
   getSource,
@@ -108,6 +109,7 @@ app.post("/review/decision", async (c) => {
 
   if (decision === "reject") {
     await resolveReview(id, "rejected", decidedBy);
+    if (item.action === "ATTACH" && item.source_id) await deleteBlob(item.source_id);
     return c.json({ id, status: "rejected" });
   }
 

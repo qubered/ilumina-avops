@@ -89,6 +89,16 @@ export async function initMortSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
+    -- Transient store for a proposed ATTACH's original bytes, so the file can be
+    -- uploaded when the proposal is approved. Deleted once attached or rejected.
+    CREATE TABLE IF NOT EXISTS mort_blobs (
+      source_id    text PRIMARY KEY,
+      file_name    text NOT NULL,
+      content_type text NOT NULL,
+      data         bytea NOT NULL,
+      created_at   timestamptz NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);

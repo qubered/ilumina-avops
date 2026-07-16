@@ -131,6 +131,11 @@ export async function claimDoc(doc: MortDoc): Promise<{ doc: MortDoc; created: b
   return { doc: existing!, created: false };
 }
 
+export async function findMortIdByOutlineId(outlineDocumentId: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT mort_id FROM mort_docs WHERE outline_document_id = $1 LIMIT 1`, [outlineDocumentId]);
+  return rows.length ? (rows[0].mort_id as string) : null;
+}
+
 export async function addRelation(sourceId: string, mortId: string, relation: RelationKind): Promise<void> {
   await pool.query(
     `INSERT INTO mort_source_doc_relations (source_id, mort_id, relation)
@@ -240,6 +245,34 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
     [limit],
   );
   return rows as ReviewRow[];
+}
+
+// --- Blobs (pending-attachment bytes) --------------------------------------
+
+export type MortBlob = { fileName: string; contentType: string; data: Buffer };
+
+export async function saveBlob(sourceId: string, blob: MortBlob): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_blobs (source_id, file_name, content_type, data)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (source_id) DO UPDATE SET
+       file_name = EXCLUDED.file_name, content_type = EXCLUDED.content_type,
+       data = EXCLUDED.data, created_at = now()`,
+    [sourceId, blob.fileName, blob.contentType, blob.data],
+  );
+}
+
+export async function getBlob(sourceId: string): Promise<MortBlob | null> {
+  const { rows } = await pool.query(
+    `SELECT file_name, content_type, data FROM mort_blobs WHERE source_id = $1`,
+    [sourceId],
+  );
+  if (!rows.length) return null;
+  return { fileName: rows[0].file_name, contentType: rows[0].content_type, data: rows[0].data as Buffer };
+}
+
+export async function deleteBlob(sourceId: string): Promise<void> {
+  await pool.query(`DELETE FROM mort_blobs WHERE source_id = $1`, [sourceId]);
 }
 
 // --- Runtime settings ------------------------------------------------------

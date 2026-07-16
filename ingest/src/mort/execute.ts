@@ -9,7 +9,7 @@ import type { TurnDeps } from "./turn.js";
  * so the caller can leave them pending rather than silently no-op.
  */
 
-export type ExecuteResult = { executed: "created" | "updated"; docId: string };
+export type ExecuteResult = { executed: "created" | "updated" | "attached"; docId: string };
 
 export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<ExecuteResult> {
   const payload = item.payload ?? {};
@@ -28,10 +28,13 @@ export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<Ex
       await deps.updateRegion(item.target_doc_id, payload.regionBody ?? "");
       return { executed: "updated", docId: item.target_doc_id };
     }
+    case "ATTACH": {
+      if (!item.target_doc_id) throw new Error("ATTACH proposal has no target doc");
+      if (!deps.attachFile) throw new Error("attach executor unavailable");
+      await deps.attachFile(item.target_doc_id, item.source_id ?? "");
+      return { executed: "attached", docId: item.target_doc_id };
+    }
     default:
-      throw new Error(
-        `cannot execute action '${item.action}' yet — ATTACH needs the original file, ` +
-          `tombstone/REVIEW need the deletion flow (P2 follow-ups)`,
-      );
+      throw new Error(`cannot execute action '${item.action}' — tombstone/REVIEW need the deletion flow (P2 follow-up)`);
   }
 }

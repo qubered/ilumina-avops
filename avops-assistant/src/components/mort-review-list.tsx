@@ -52,25 +52,23 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
             {item.source_id && <p className="mt-0.5 text-[12px] text-text-3">{item.source_id}</p>}
             {item.rationale && <p className="mt-1 text-text-2">{item.rationale}</p>}
             <div className="mt-2 flex items-center gap-2">
-              {item.action === "CREATE" || item.action === "UPDATE_ADDITIVE" ? (
+              {["CREATE", "UPDATE_ADDITIVE", "ATTACH"].includes(item.action) ? (
                 <button
                   onClick={() => decide(item.id, "approve")}
                   disabled={busy === item.id}
                   className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-success hover:bg-success/10 disabled:opacity-50"
                 >
-                  {busy === item.id ? "…" : "Approve & write"}
+                  {busy === item.id ? "…" : item.action === "ATTACH" ? "Approve & attach" : "Approve & write"}
                 </button>
               ) : (
-                <span className="text-[11px] text-text-3">
-                  {item.action === "ATTACH" ? "attach not wired yet — reject or handle manually" : "flagged for a human — no auto-action"}
-                </span>
+                <span className="text-[11px] text-text-3">flagged for a human — no auto-action</span>
               )}
               <button
                 onClick={() => decide(item.id, "reject")}
                 disabled={busy === item.id}
                 className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
-                {item.action === "CREATE" || item.action === "UPDATE_ADDITIVE" ? "Reject" : "Dismiss"}
+                {["CREATE", "UPDATE_ADDITIVE", "ATTACH"].includes(item.action) ? "Reject" : "Dismiss"}
               </button>
             </div>
           </li>

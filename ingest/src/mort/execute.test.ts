@@ -19,8 +19,12 @@ function row(over: Partial<ReviewRow>): ReviewRow {
   };
 }
 
-function fakeDeps() {
-  const calls = { created: [] as unknown[], updated: [] as Array<{ docId: string }> };
+function fakeDeps(withAttach = true) {
+  const calls = {
+    created: [] as unknown[],
+    updated: [] as Array<{ docId: string }>,
+    attached: [] as Array<{ docId: string; sourceId: string }>,
+  };
   const deps = {
     createDoc: async (a: { title: string }) => {
       calls.created.push(a);
@@ -29,6 +33,11 @@ function fakeDeps() {
     updateRegion: async (docId: string) => {
       calls.updated.push({ docId });
     },
+    attachFile: withAttach
+      ? async (docId: string, sourceId: string) => {
+          calls.attached.push({ docId, sourceId });
+        }
+      : undefined,
   } as unknown as TurnDeps;
   return { deps, calls };
 }
@@ -53,7 +62,19 @@ test("UPDATE_ADDITIVE with no target → throws (never a blind write)", async ()
   await assert.rejects(() => executeReview(row({ action: "UPDATE_ADDITIVE", target_doc_id: null }), deps), /no target/);
 });
 
-test("ATTACH is not executable yet → throws clearly", async () => {
+test("approve ATTACH with target → attaches the stored file", async () => {
+  const { deps, calls } = fakeDeps();
+  const r = await executeReview(row({ action: "ATTACH", target_doc_id: "doc-7" }), deps);
+  assert.equal(r.executed, "attached");
+  assert.deepEqual(calls.attached, [{ docId: "doc-7", sourceId: "Lighting/E2.docx" }]);
+});
+
+test("ATTACH with no target → throws", async () => {
   const { deps } = fakeDeps();
-  await assert.rejects(() => executeReview(row({ action: "ATTACH" }), deps), /ATTACH needs the original file/);
+  await assert.rejects(() => executeReview(row({ action: "ATTACH", target_doc_id: null }), deps), /no target/);
+});
+
+test("tombstone is not executable → throws clearly", async () => {
+  const { deps } = fakeDeps();
+  await assert.rejects(() => executeReview(row({ action: "tombstone" }), deps), /deletion flow/);
 });

@@ -54,6 +54,19 @@ export function extractMortRegion(text: string): string | null {
  * one after the existing content. Throws on a malformed region (caller should
  * have checked isMalformedRegion and routed to review).
  */
+/**
+ * Append a bullet line under a `## Files` heading inside Mort's region body,
+ * creating the heading if absent. Used to record an attached reference file
+ * (MA3 show, console file, …) additively. Skips exact-duplicate lines.
+ */
+export function appendToFilesSection(regionBody: string, line: string): string {
+  const heading = "## Files";
+  const body = regionBody.trimEnd();
+  if (body.includes(line.trim())) return body; // already listed
+  if (body.includes(heading)) return `${body}\n${line}`;
+  return `${body}\n\n${heading}\n\n${line}`.trimStart();
+}
+
 export function spliceMortRegion(currentText: string, mortBody: string): string {
   if (isMalformedRegion(currentText)) {
     throw new Error("refusing to splice: document has a malformed Mort region (stray marker)");

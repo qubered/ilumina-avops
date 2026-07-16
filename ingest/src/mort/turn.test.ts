@@ -19,12 +19,13 @@ function makeDecision(over: Partial<Decision>): Decision {
 type Calls = {
   created: number;
   updated: Array<{ docId: string }>;
+  attached: Array<{ docId: string; sourceId: string }>;
   reviews: Array<{ action: string }>;
   journal: string[];
 };
 
-function fakeDeps(decision: Decision): { deps: TurnDeps; calls: Calls } {
-  const calls: Calls = { created: 0, updated: [], reviews: [], journal: [] };
+function fakeDeps(decision: Decision, withAttach = false): { deps: TurnDeps; calls: Calls } {
+  const calls: Calls = { created: 0, updated: [], attached: [], reviews: [], journal: [] };
   const deps: TurnDeps = {
     kbSearch: async () => [],
     getDocumentText: async () => null,
@@ -36,6 +37,11 @@ function fakeDeps(decision: Decision): { deps: TurnDeps; calls: Calls } {
       calls.created++;
       return "doc-new";
     },
+    attachFile: withAttach
+      ? async (docId, sourceId) => {
+          calls.attached.push({ docId, sourceId });
+        }
+      : undefined,
     enqueueReview: async (item) => {
       calls.reviews.push({ action: item.action });
       return true;
@@ -99,9 +105,24 @@ test("SKIP → nothing executed", async () => {
   assert.equal(calls.reviews.length, 0);
 });
 
-test("ATTACH is proposed for review (P1 — executor wiring is P2)", async () => {
+test("ATTACH without an attach executor → proposed for review", async () => {
   const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-7", confidence: 0.9 }));
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.reviews[0].action, "ATTACH");
+});
+
+test("live + confident ATTACH with executor → attaches, no review", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true);
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "attached");
+  assert.deepEqual(calls.attached, [{ docId: "doc-9", sourceId: FILE.sourceId }]);
+  assert.equal(calls.reviews.length, 0);
+});
+
+test("shadow ATTACH always proposes even with an executor", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true);
+  const out = await runMortTurn(FILE, { mode: "shadow", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "review");
+  assert.equal(calls.attached.length, 0);
 });

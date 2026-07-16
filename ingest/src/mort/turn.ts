@@ -28,6 +28,9 @@ export type TurnDeps = {
   updateRegion: (docId: string, regionBody: string) => Promise<void>;
   /** Create a new doc with Mort's region as its body. */
   createDoc: (args: { title: string; collection: string | null; regionBody: string; sourceId: string }) => Promise<string>;
+  /** Upload a previously-stored file to a doc and record it in Mort's Files
+   *  section (attach executor). Optional — when absent, ATTACH is proposed. */
+  attachFile?: (docId: string, sourceId: string) => Promise<void>;
   /** Queue a proposal for human review (idempotent). */
   enqueueReview: (item: {
     action: string;
@@ -126,8 +129,13 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       return { role, decided: "UPDATE_ADDITIVE", executed: "updated", docId: decision.targetDocId };
     }
     case "ATTACH": {
-      // Attaching the original file lands in R1/P2 wiring; for now propose so the
-      // artifact link is added under review rather than silently dropped.
+      // Live + confident + we can attach → do it. Otherwise propose (the worker
+      // has stored the bytes so approval can attach later).
+      if (decision.targetDocId && deps.attachFile) {
+        await deps.attachFile(decision.targetDocId, file.sourceId);
+        await deps.journal({ ...base, mortId: decision.targetDocId, action: "attach" });
+        return { role, decided: "ATTACH", executed: "attached", docId: decision.targetDocId };
+      }
       await deps.enqueueReview({
         action: "ATTACH",
         sourceId: file.sourceId,
