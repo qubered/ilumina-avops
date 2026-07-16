@@ -58,6 +58,8 @@ const envSchema = z
     // Shared secret for internal service-to-service calls (Mort ingest → this
     // app's /api/internal/*). Empty = the internal endpoints refuse all callers.
     INTERNAL_API_KEY: z.string().optional().default(""),
+    // Where the assistant reaches the Mort ingest service (review admin UI).
+    INGEST_INTERNAL_URL: z.string().url().default("http://ingest:8080"),
     APP_URL: z.string().url().default("http://localhost:3000"),
     // OIDC client credentials for Outline SSO (this app is the identity
     // provider). When both are set, Outline is registered as a trusted client.
