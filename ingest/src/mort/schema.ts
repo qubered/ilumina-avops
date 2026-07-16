@@ -81,6 +81,14 @@ export async function initMortSchema(): Promise<void> {
       decided_by   text
     );
 
+    -- Runtime settings (e.g. authoring mode) — overrides env defaults, editable
+    -- from the admin UI without a redeploy.
+    CREATE TABLE IF NOT EXISTS mort_settings (
+      key        text PRIMARY KEY,
+      value      text NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);

@@ -1,6 +1,7 @@
 import { env } from "../env.js";
 import { extract } from "../extract.js";
 import { getSelfUserId } from "../outline.js";
+import { getEffectiveMode, getEffectiveThreshold } from "./config.js";
 import { buildTurnDeps } from "./deps.js";
 import { getSource, upsertSource } from "./memory.js";
 import { runMortTurn, type TurnDeps } from "./turn.js";
@@ -51,9 +52,11 @@ export async function getDeps(): Promise<TurnDeps> {
 }
 
 async function drain(): Promise<void> {
-  if (running || !deps) return;
+  if (running) return;
   running = true;
   try {
+    if (!deps) await initWorker(); // lazy: mode may have been flipped to live at runtime
+    if (!deps) return; // init failed — leave jobs queued for the next drain
     while (queue.length) {
       const job = queue.shift()!;
       try {
@@ -76,6 +79,12 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
     return;
   }
 
+  const mode = await getEffectiveMode();
+  if (mode === "off") {
+    console.log(`[mort] ${job.sourceId}: mode flipped to off, skipped`);
+    return;
+  }
+
   const extraction = await extract(job.fileName, job.contentType, job.buffer);
   const outcome = await runMortTurn(
     {
@@ -85,10 +94,7 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
       contentType: job.contentType,
       extractedMarkdown: extraction.markdown,
     },
-    {
-      mode: env.MORT_MODE === "live" ? "live" : "shadow",
-      confidenceThreshold: env.MORT_CONFIDENCE_THRESHOLD,
-    },
+    { mode: mode === "live" ? "live" : "shadow", confidenceThreshold: await getEffectiveThreshold() },
     d,
   );
 

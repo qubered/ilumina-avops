@@ -27,6 +27,7 @@ import {
 } from "./mort/memory.js";
 import { executeReview } from "./mort/execute.js";
 import { enqueueTurn, getDeps, initWorker } from "./mort/worker.js";
+import { getEffectiveMode, getEffectiveThreshold, setMode } from "./mort/config.js";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
@@ -68,6 +69,26 @@ const requireReviewAuth: MiddlewareHandler = async (c, next) => {
 };
 app.use("/review", requireReviewAuth);
 app.use("/review/decision", requireReviewAuth);
+
+// Mort runtime config — the admin UI reads/sets the authoring mode without a redeploy.
+app.use("/mort/config", requireReviewAuth);
+
+app.get("/mort/config", async (c) => {
+  return c.json({
+    mode: await getEffectiveMode(),
+    threshold: await getEffectiveThreshold(),
+    envDefault: env.MORT_MODE,
+  });
+});
+
+app.post("/mort/config", async (c) => {
+  const parsed = z.object({ mode: z.enum(["off", "shadow", "live"]) }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error?.issues }, 400);
+  await setMode(parsed.data.mode);
+  if (parsed.data.mode !== "off") await getDeps(); // warm the worker so the next file processes
+  console.log(`[mort] mode set to ${parsed.data.mode} via admin`);
+  return c.json({ mode: parsed.data.mode });
+});
 
 app.get("/review", async (c) => {
   const items = await listPendingReviews(200);
@@ -123,7 +144,8 @@ app.post("/ingest", async (c) => {
   // Mort authoring path (v1.3). When enabled, /ingest enqueues an async turn and
   // returns 202; the legacy one-file-one-article flow below runs only when
   // MORT_MODE=off, so existing deployments are unchanged until they opt in.
-  if (env.MORT_MODE !== "off") {
+  const mortMode = await getEffectiveMode();
+  if (mortMode !== "off") {
     if (input.op === "move" && input.oldSourceId) {
       await renameSource(input.oldSourceId, input.sourceId);
       return c.json({ action: "moved", from: input.oldSourceId, to: input.sourceId }, 202);
@@ -136,7 +158,7 @@ app.post("/ingest", async (c) => {
       contentHash,
       buffer,
     });
-    return c.json({ action: "queued", mode: env.MORT_MODE }, 202);
+    return c.json({ action: "queued", mode: mortMode }, 202);
   }
 
   try {
@@ -309,9 +331,10 @@ function buildBody(
 
 await initStore();
 await initMortSchema();
-if (env.MORT_MODE !== "off") await initWorker();
+const bootMode = await getEffectiveMode();
+if (bootMode !== "off") await initWorker();
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
-    `[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER}, Mort: ${env.MORT_MODE})`,
+    `[ingest] listening on :${info.port} (AI: ${env.INGEST_AI_PROVIDER}, Mort: ${bootMode})`,
   );
 });

@@ -242,6 +242,21 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   return rows as ReviewRow[];
 }
 
+// --- Runtime settings ------------------------------------------------------
+
+export async function getSetting(key: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT value FROM mort_settings WHERE key = $1`, [key]);
+  return rows.length ? (rows[0].value as string) : null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [key, value],
+  );
+}
+
 export async function getReviewItem(id: number): Promise<ReviewRow | null> {
   const { rows } = await pool.query(
     `SELECT id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at

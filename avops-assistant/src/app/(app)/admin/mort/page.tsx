@@ -1,19 +1,22 @@
-import { listPendingReviews, type MortReviewItem } from "@/lib/mort-review";
+import { getMortConfig, listPendingReviews, type MortConfig, type MortReviewItem } from "@/lib/mort-review";
 import { MortReviewList } from "@/components/mort-review-list";
+import { MortModeSwitcher } from "@/components/mort-mode-switcher";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminMortPage() {
   let items: MortReviewItem[] = [];
+  let config: MortConfig | null = null;
   let error: string | null = null;
   try {
-    items = await listPendingReviews();
+    [config, items] = await Promise.all([getMortConfig(), listPendingReviews()]);
   } catch (e) {
     error = e instanceof Error ? e.message : "unreachable";
   }
 
   return (
     <div className="pb-12">
+      {config && <MortModeSwitcher config={config} />}
       <section className="mt-6">
         <h2 className="border-b border-divider pb-2 text-[15px] font-semibold text-text">
           Mort — pending proposals
