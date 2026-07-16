@@ -31,10 +31,15 @@ python mort_watcher.py
 ```
 
 It scans every few seconds; a file is sent once untouched for a few seconds (so
-partial downloads aren't sent early). State lives in `MANIFEST_DB` (default
-`.mort-manifest.sqlite`) — the file→checksum record used to detect changes,
-renames, and deletions. Re-sending the same relative path updates its KB
-article; a rename becomes a single `move`.
+partial downloads aren't sent early). State lives in a SQLite manifest — the
+file→checksum record used to detect changes, renames, and deletions. Re-sending
+the same relative path updates its KB article; a rename becomes a single `move`.
+
+**The manifest defaults to a local, non-synced state dir** (`%LOCALAPPDATA%\mort-watcher\`
+on Windows, `~/.local/state/mort-watcher/` otherwise), keyed by watch folder, so
+it never uploads to OneDrive. Override with `--db` / `MANIFEST_DB` if you want it
+elsewhere — but keep it **outside** the synced folder (the watcher warns if you
+point it inside one).
 
 - `--once` — scan and exit (e.g. from Task Scheduler).
 - `--dry-run` — print the plan, send nothing (no `requests` needed).

@@ -57,6 +57,24 @@ def log(msg: str) -> None:
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}", flush=True)
 
 
+def default_manifest_path(folder: Path) -> Path:
+    """A local, NON-synced state dir so the manifest never uploads to OneDrive.
+    Keyed by watch folder so multiple watchers don't collide."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "state")
+    state = Path(base) / "mort-watcher"
+    state.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(str(folder).encode()).hexdigest()[:12]
+    return state / f"manifest-{key}.sqlite"
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # File classification (filesystem-facing; kept tiny and side-effect-free)
 # ---------------------------------------------------------------------------
@@ -303,7 +321,8 @@ def config() -> argparse.Namespace:
     p.add_argument("--folder", default=os.environ.get("WATCH_FOLDER"))
     p.add_argument("--url", default=os.environ.get("INGEST_URL"))
     p.add_argument("--key", default=os.environ.get("INGEST_API_KEY"))
-    p.add_argument("--db", default=os.environ.get("MANIFEST_DB", ".mort-manifest.sqlite"))
+    p.add_argument("--db", default=os.environ.get("MANIFEST_DB"),
+                   help="manifest DB path (default: a local non-synced state dir, off OneDrive)")
     p.add_argument("--interval", type=float, default=float(os.environ.get("POLL_INTERVAL", "5")))
     p.add_argument("--stable-seconds", type=float, default=float(os.environ.get("STABLE_SECONDS", "5")))
     p.add_argument("--max-mb", type=float, default=float(os.environ.get("MAX_MB", "95")))
@@ -372,8 +391,14 @@ def run_once(root: Path, manifest: Manifest, args: argparse.Namespace) -> Change
 def main() -> int:
     args = config()
     root = Path(args.folder).expanduser().resolve() if args.folder else Path.cwd()
-    manifest = Manifest(Path(args.db).expanduser().resolve())
-    log(f"Watching {root} (manifest {args.db}){' [dry-run]' if args.dry_run else ''}")
+    db_path = Path(args.db).expanduser().resolve() if args.db else default_manifest_path(root)
+    if _is_within(db_path, root):
+        log(
+            f"WARNING: manifest {db_path} is inside the watch folder — it will sync to "
+            f"OneDrive. Set --db / MANIFEST_DB to a path outside the synced folder."
+        )
+    manifest = Manifest(db_path)
+    log(f"Watching {root} (manifest {db_path}){' [dry-run]' if args.dry_run else ''}")
     if args.once or args.dry_run:
         run_once(root, manifest, args)
         return 0
