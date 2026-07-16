@@ -98,7 +98,7 @@ app.get("/review", async (c) => {
 
 app.post("/review/decision", async (c) => {
   const parsed = z
-    .object({ id: z.number().int(), decision: z.enum(["approve", "reject"]), decidedBy: z.string().optional() })
+    .object({ id: z.coerce.number().int(), decision: z.enum(["approve", "reject"]), decidedBy: z.string().optional() })
     .safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
   const { id, decision, decidedBy } = parsed.data;

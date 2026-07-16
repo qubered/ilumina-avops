@@ -266,7 +266,7 @@ export type ReviewRow = {
 
 export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   const { rows } = await pool.query(
-    `SELECT id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+    `SELECT id::int AS id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
        FROM mort_review_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT $1`,
     [limit],
   );
@@ -318,7 +318,7 @@ export async function setSetting(key: string, value: string): Promise<void> {
 
 export async function getReviewItem(id: number): Promise<ReviewRow | null> {
   const { rows } = await pool.query(
-    `SELECT id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+    `SELECT id::int AS id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
        FROM mort_review_queue WHERE id = $1`,
     [id],
   );
