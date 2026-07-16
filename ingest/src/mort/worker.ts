@@ -4,7 +4,16 @@ import { getSelfUserId } from "../outline.js";
 import { classifyRole } from "./classify.js";
 import { getEffectiveMode, getEffectiveThreshold } from "./config.js";
 import { buildTurnDeps } from "./deps.js";
-import { deleteBlob, getSource, saveBlob, upsertSource } from "./memory.js";
+import { syncEventSheet } from "./events.js";
+import {
+  deleteBlob,
+  deleteEventsByHash,
+  getEventHashes,
+  getSource,
+  insertEvent,
+  saveBlob,
+  upsertSource,
+} from "./memory.js";
 import { runMortTurn, type TurnDeps } from "./turn.js";
 
 /**
@@ -86,9 +95,24 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
     return;
   }
 
+  const role = classifyRole({ fileName: job.fileName, contentType: job.contentType, folderPath: job.folderPath });
+
+  // Event log (R1): reconcile rows into episodic memory instead of authoring a doc.
+  if (role === "event_log") {
+    const res = await syncEventSheet(job.sourceId, job.buffer, {
+      getHashes: getEventHashes,
+      insertRow: insertEvent,
+      deleteHashes: deleteEventsByHash,
+    });
+    await upsertSource({ sourceId: job.sourceId, checksum: job.contentHash, role, folderOrigin: job.folderPath ?? null });
+    console.log(
+      `[mort] ${job.sourceId}: event log — +${res.inserted} -${res.deleted} of ${res.total}${res.guarded ? " (guarded: empty sheet, kept existing)" : ""}`,
+    );
+    return;
+  }
+
   // Reference/media may become an ATTACH → stash the bytes so the turn (live) or
   // a later approval (shadow) can upload them.
-  const role = classifyRole({ fileName: job.fileName, contentType: job.contentType, folderPath: job.folderPath });
   const mightAttach = role === "reference" || role === "media";
   if (mightAttach) {
     await saveBlob(job.sourceId, { fileName: job.fileName, contentType: job.contentType, data: job.buffer });

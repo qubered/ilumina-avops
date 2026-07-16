@@ -99,7 +99,25 @@ export async function initMortSchema(): Promise<void> {
       created_at   timestamptz NOT NULL DEFAULT now()
     );
 
+    -- Episodic memory (R1): one row per action logged in the events spreadsheet.
+    -- One row ≠ one KB page — these are dated observations, not documentation.
+    CREATE TABLE IF NOT EXISTS mort_events (
+      id           bigserial PRIMARY KEY,
+      source_id    text NOT NULL,
+      row_hash     text NOT NULL,
+      event        text,
+      occurred_on  date,
+      zone         text[] NOT NULL DEFAULT '{}',
+      system       text[] NOT NULL DEFAULT '{}',
+      entities     text[] NOT NULL DEFAULT '{}',
+      action_text  text NOT NULL,
+      ingested_at  timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (source_id, row_hash)
+    );
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
+    CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);
+    CREATE INDEX IF NOT EXISTS mort_events_date ON mort_events (occurred_on);
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);
   `);

@@ -1,4 +1,5 @@
 import { pool } from "./db.js";
+import type { EventRow } from "./events.js";
 import type {
   FileRole,
   MortDoc,
@@ -271,6 +272,27 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
     [limit],
   );
   return rows as ReviewRow[];
+}
+
+// --- Events (episodic memory) ----------------------------------------------
+
+export async function getEventHashes(sourceId: string): Promise<string[]> {
+  const { rows } = await pool.query(`SELECT row_hash FROM mort_events WHERE source_id = $1`, [sourceId]);
+  return rows.map((r) => r.row_hash as string);
+}
+
+export async function insertEvent(sourceId: string, row: EventRow): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_events (source_id, row_hash, event, occurred_on, zone, system, entities, action_text)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (source_id, row_hash) DO NOTHING`,
+    [sourceId, row.rowHash, row.event, row.occurredOn, row.zone, row.system, row.entities, row.actionText],
+  );
+}
+
+export async function deleteEventsByHash(sourceId: string, hashes: string[]): Promise<void> {
+  if (!hashes.length) return;
+  await pool.query(`DELETE FROM mort_events WHERE source_id = $1 AND row_hash = ANY($2)`, [sourceId, hashes]);
 }
 
 // --- Blobs (pending-attachment bytes) --------------------------------------
