@@ -188,6 +188,9 @@ services:
       # Mort → assistant internal KB search (single Qdrant owner).
       ASSISTANT_KB_URL: ${ASSISTANT_KB_URL:-http://assistant:3000/api/internal/kb-search}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      # Mort authoring mode: off (legacy) | shadow (propose only) | live.
+      MORT_MODE: ${MORT_MODE:-off}
+      MORT_CONFIDENCE_THRESHOLD: ${MORT_CONFIDENCE_THRESHOLD:-0.6}
     restart: unless-stopped
 
   # Widget-injection layer only: sub_filter adds the chat bubble script to
