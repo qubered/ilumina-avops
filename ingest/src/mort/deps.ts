@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { env } from "../env.js";
 import {
+  archiveDocument,
   createDocument,
   deleteDocument,
   ensureCollection,
@@ -13,11 +14,14 @@ import {
   addRelation,
   appendJournal,
   claimDoc,
+  countAuthors,
   deleteBlob,
+  deleteSourceRelations,
   enqueueReview,
   findDocByRegistryKey,
   findMortIdByOutlineId,
   getBlob,
+  getSourceRelations,
   recordDocState,
   registryKey,
 } from "./memory.js";
@@ -119,6 +123,21 @@ export function buildTurnDeps(selfUserId: string | null): TurnDeps {
       const mortId = await findMortIdByOutlineId(docId);
       if (mortId) await addRelation(sourceId, mortId, "attached");
       await deleteBlob(sourceId);
+    },
+    removeSource: async (sourceId) => {
+      // On an approved tombstone, archive (reversible) only docs this source
+      // SOLELY authored — never a shared/curated doc. Attach/update relations are
+      // just dropped (their docs live on).
+      const rels = await getSourceRelations(sourceId);
+      const archivedDocIds: string[] = [];
+      for (const r of rels) {
+        if (r.relation === "authored" && (await countAuthors(r.mortId)) <= 1) {
+          await archiveDocument(r.outlineDocumentId);
+          archivedDocIds.push(r.outlineDocumentId);
+        }
+      }
+      await deleteSourceRelations(sourceId);
+      return { archivedDocIds };
     },
     enqueueReview: (item) =>
       enqueueReview({

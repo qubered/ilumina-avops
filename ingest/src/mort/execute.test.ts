@@ -24,6 +24,7 @@ function fakeDeps(withAttach = true) {
     created: [] as unknown[],
     updated: [] as Array<{ docId: string }>,
     attached: [] as Array<{ docId: string; sourceId: string }>,
+    removed: [] as Array<{ sourceId: string }>,
   };
   const deps = {
     createDoc: async (a: { title: string }) => {
@@ -38,6 +39,10 @@ function fakeDeps(withAttach = true) {
           calls.attached.push({ docId, sourceId });
         }
       : undefined,
+    removeSource: async (sourceId: string) => {
+      calls.removed.push({ sourceId });
+      return { archivedDocIds: ["doc-arch"] };
+    },
   } as unknown as TurnDeps;
   return { deps, calls };
 }
@@ -74,7 +79,14 @@ test("ATTACH with no target → throws", async () => {
   await assert.rejects(() => executeReview(row({ action: "ATTACH", target_doc_id: null }), deps), /no target/);
 });
 
-test("tombstone is not executable → throws clearly", async () => {
+test("approve tombstone → removes the source (archives sole-authored docs)", async () => {
+  const { deps, calls } = fakeDeps();
+  const r = await executeReview(row({ action: "tombstone" }), deps);
+  assert.equal(r.executed, "removed");
+  assert.deepEqual(calls.removed, [{ sourceId: "Lighting/E2.docx" }]);
+});
+
+test("REVIEW-decided item has no executor → throws", async () => {
   const { deps } = fakeDeps();
-  await assert.rejects(() => executeReview(row({ action: "tombstone" }), deps), /deletion flow/);
+  await assert.rejects(() => executeReview(row({ action: "REVIEW" }), deps), /no executor/);
 });

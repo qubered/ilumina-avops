@@ -105,6 +105,11 @@ export async function deleteDocument(id: string): Promise<void> {
   await rpc("documents.delete", { id });
 }
 
+/** Archive a document — reversible removal; preferred over delete for approved tombstones. */
+export async function archiveDocument(id: string): Promise<void> {
+  await rpc("documents.archive", { id });
+}
+
 /** The bot's own Outline user id — so `updatedById !== me` means a human edited it. */
 export async function getSelfUserId(): Promise<string | null> {
   const d = await rpc<{ id?: string }>("auth.info", {});

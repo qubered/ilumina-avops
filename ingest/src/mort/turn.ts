@@ -31,6 +31,8 @@ export type TurnDeps = {
   /** Upload a previously-stored file to a doc and record it in Mort's Files
    *  section (attach executor). Optional — when absent, ATTACH is proposed. */
   attachFile?: (docId: string, sourceId: string) => Promise<void>;
+  /** Approved-tombstone removal: archive docs a vanished source solely authored. */
+  removeSource?: (sourceId: string) => Promise<{ archivedDocIds: string[] }>;
   /** Queue a proposal for human review (idempotent). */
   enqueueReview: (item: {
     action: string;

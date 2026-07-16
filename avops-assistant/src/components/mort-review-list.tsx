@@ -9,6 +9,15 @@ const ACTION_COLOR: Record<string, string> = {
   UPDATE_ADDITIVE: "text-accent",
   ATTACH: "text-text-2",
   REVIEW: "text-text-2",
+  tombstone: "text-danger",
+};
+
+const EXECUTABLE = new Set(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "tombstone"]);
+const APPROVE_LABEL: Record<string, string> = {
+  CREATE: "Approve & write",
+  UPDATE_ADDITIVE: "Approve & write",
+  ATTACH: "Approve & attach",
+  tombstone: "Approve removal",
 };
 
 export function MortReviewList({ items }: { items: MortReviewItem[] }) {
@@ -52,13 +61,13 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
             {item.source_id && <p className="mt-0.5 text-[12px] text-text-3">{item.source_id}</p>}
             {item.rationale && <p className="mt-1 text-text-2">{item.rationale}</p>}
             <div className="mt-2 flex items-center gap-2">
-              {["CREATE", "UPDATE_ADDITIVE", "ATTACH"].includes(item.action) ? (
+              {EXECUTABLE.has(item.action) ? (
                 <button
                   onClick={() => decide(item.id, "approve")}
                   disabled={busy === item.id}
                   className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-success hover:bg-success/10 disabled:opacity-50"
                 >
-                  {busy === item.id ? "…" : item.action === "ATTACH" ? "Approve & attach" : "Approve & write"}
+                  {busy === item.id ? "…" : APPROVE_LABEL[item.action] ?? "Approve"}
                 </button>
               ) : (
                 <span className="text-[11px] text-text-3">flagged for a human — no auto-action</span>
@@ -68,7 +77,7 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
                 disabled={busy === item.id}
                 className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
-                {["CREATE", "UPDATE_ADDITIVE", "ATTACH"].includes(item.action) ? "Reject" : "Dismiss"}
+                {EXECUTABLE.has(item.action) ? "Reject" : "Dismiss"}
               </button>
             </div>
           </li>

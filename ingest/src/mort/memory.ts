@@ -144,6 +144,32 @@ export async function addRelation(sourceId: string, mortId: string, relation: Re
   );
 }
 
+/** All docs a source touched, with the relation and the Outline id. */
+export async function getSourceRelations(
+  sourceId: string,
+): Promise<Array<{ mortId: string; relation: RelationKind; outlineDocumentId: string }>> {
+  const { rows } = await pool.query(
+    `SELECT r.mort_id, r.relation, d.outline_document_id
+       FROM mort_source_doc_relations r JOIN mort_docs d ON d.mort_id = r.mort_id
+      WHERE r.source_id = $1`,
+    [sourceId],
+  );
+  return rows.map((r) => ({ mortId: r.mort_id, relation: r.relation, outlineDocumentId: r.outline_document_id }));
+}
+
+/** How many distinct sources authored a doc — 1 means the doc has a sole author. */
+export async function countAuthors(mortId: string): Promise<number> {
+  const { rows } = await pool.query(
+    `SELECT count(DISTINCT source_id)::int AS n FROM mort_source_doc_relations WHERE mort_id = $1 AND relation = 'authored'`,
+    [mortId],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+export async function deleteSourceRelations(sourceId: string): Promise<void> {
+  await pool.query(`DELETE FROM mort_source_doc_relations WHERE source_id = $1`, [sourceId]);
+}
+
 // --- Journal ---------------------------------------------------------------
 
 export async function appendJournal(entry: {

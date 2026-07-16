@@ -9,7 +9,7 @@ import type { TurnDeps } from "./turn.js";
  * so the caller can leave them pending rather than silently no-op.
  */
 
-export type ExecuteResult = { executed: "created" | "updated" | "attached"; docId: string };
+export type ExecuteResult = { executed: "created" | "updated" | "attached" | "removed"; docId: string };
 
 export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<ExecuteResult> {
   const payload = item.payload ?? {};
@@ -34,7 +34,12 @@ export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<Ex
       await deps.attachFile(item.target_doc_id, item.source_id ?? "");
       return { executed: "attached", docId: item.target_doc_id };
     }
+    case "tombstone": {
+      if (!deps.removeSource) throw new Error("removeSource executor unavailable");
+      const res = await deps.removeSource(item.source_id ?? "");
+      return { executed: "removed", docId: res.archivedDocIds[0] ?? "" };
+    }
     default:
-      throw new Error(`cannot execute action '${item.action}' — tombstone/REVIEW need the deletion flow (P2 follow-up)`);
+      throw new Error(`cannot execute action '${item.action}' (no executor)`);
   }
 }
