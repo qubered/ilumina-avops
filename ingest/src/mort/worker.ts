@@ -43,6 +43,13 @@ export function enqueueTurn(job: TurnJob): void {
   void drain();
 }
 
+/** The real Mort deps (for the review executor). Builds lazily if the worker
+ *  wasn't started (e.g. approving proposals while MORT_MODE=off). */
+export async function getDeps(): Promise<TurnDeps> {
+  if (!deps) await initWorker();
+  return deps!;
+}
+
 async function drain(): Promise<void> {
   if (running || !deps) return;
   running = true;

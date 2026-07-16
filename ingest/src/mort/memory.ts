@@ -220,10 +220,43 @@ export async function enqueueReview(item: ReviewItem): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function listPendingReviews(limit = 100): Promise<Array<Record<string, unknown>>> {
+/** A row from mort_review_queue (snake_case, as stored). */
+export type ReviewRow = {
+  id: number;
+  action: string;
+  source_id: string | null;
+  mort_id: string | null;
+  target_doc_id: string | null;
+  payload: { title?: string; collection?: string | null; regionBody?: string } | null;
+  rationale: string | null;
+  status: string;
+  created_at: string;
+};
+
+export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM mort_review_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT $1`,
+    `SELECT id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+       FROM mort_review_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT $1`,
     [limit],
   );
-  return rows;
+  return rows as ReviewRow[];
+}
+
+export async function getReviewItem(id: number): Promise<ReviewRow | null> {
+  const { rows } = await pool.query(
+    `SELECT id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+       FROM mort_review_queue WHERE id = $1`,
+    [id],
+  );
+  return rows.length ? (rows[0] as ReviewRow) : null;
+}
+
+/** Mark a proposal decided. Only transitions a pending item; returns false if it wasn't pending. */
+export async function resolveReview(id: number, status: "approved" | "rejected", decidedBy?: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE mort_review_queue SET status = $2, decided_at = now(), decided_by = $3
+       WHERE id = $1 AND status = 'pending'`,
+    [id, status, decidedBy ?? null],
+  );
+  return (rowCount ?? 0) > 0;
 }

@@ -15,8 +15,18 @@ import {
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
 import type { MiddlewareHandler } from "hono";
 import { initMortSchema } from "./mort/schema.js";
-import { appendJournal, enqueueReview, getSource, renameSource, tombstoneSource } from "./mort/memory.js";
-import { enqueueTurn, initWorker } from "./mort/worker.js";
+import {
+  appendJournal,
+  enqueueReview,
+  getReviewItem,
+  getSource,
+  listPendingReviews,
+  renameSource,
+  resolveReview,
+  tombstoneSource,
+} from "./mort/memory.js";
+import { executeReview } from "./mort/execute.js";
+import { enqueueTurn, getDeps, initWorker } from "./mort/worker.js";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
@@ -47,6 +57,51 @@ const requireIngestAuth: MiddlewareHandler = async (c, next) => {
 };
 app.use("/ingest", requireIngestAuth);
 app.use("/ingest/delete", requireIngestAuth);
+
+// Review API — used by the assistant admin UI (INTERNAL_API_KEY) and manual
+// curl (INGEST_API_KEY). Accepts either bearer token.
+const requireReviewAuth: MiddlewareHandler = async (c, next) => {
+  const token = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const ok = token === env.INGEST_API_KEY || (env.INTERNAL_API_KEY && token === env.INTERNAL_API_KEY);
+  if (!ok) return c.json({ error: "Unauthorized" }, 401);
+  await next();
+};
+app.use("/review", requireReviewAuth);
+app.use("/review/decision", requireReviewAuth);
+
+app.get("/review", async (c) => {
+  const items = await listPendingReviews(200);
+  return c.json({ items });
+});
+
+app.post("/review/decision", async (c) => {
+  const parsed = z
+    .object({ id: z.number().int(), decision: z.enum(["approve", "reject"]), decidedBy: z.string().optional() })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
+  const { id, decision, decidedBy } = parsed.data;
+
+  const item = await getReviewItem(id);
+  if (!item) return c.json({ error: "Not found" }, 404);
+  if (item.status !== "pending") return c.json({ error: `already ${item.status}` }, 409);
+
+  if (decision === "reject") {
+    await resolveReview(id, "rejected", decidedBy);
+    return c.json({ id, status: "rejected" });
+  }
+
+  // Approve → execute the proposed action, then mark approved. If the executor
+  // can't handle it yet (ATTACH/tombstone), leave the item pending and 422.
+  try {
+    const result = await executeReview(item, await getDeps());
+    await resolveReview(id, "approved", decidedBy);
+    await appendJournal({ sourceId: item.source_id, mortId: result.docId, action: `approved:${item.action}`, rationale: `review ${id}` });
+    return c.json({ id, status: "approved", ...result });
+  } catch (err) {
+    console.error(`[review] execute ${id} failed:`, err);
+    return c.json({ id, status: "pending", error: err instanceof Error ? err.message : "execute failed" }, 422);
+  }
+});
 
 app.post("/ingest", async (c) => {
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
