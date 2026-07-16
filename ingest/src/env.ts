@@ -30,6 +30,8 @@ const schema = z
     // Mort → assistant internal KB search (v1.5). Empty ASSISTANT_KB_URL = Mort
     // runs without KB context (graceful degradation, never a hard failure).
     ASSISTANT_KB_URL: z.string().optional().default(""),
+    // Assistant endpoint that embeds + indexes event rows into Qdrant (R1).
+    ASSISTANT_EVENTS_INDEX_URL: z.string().optional().default(""),
     INTERNAL_API_KEY: z.string().optional().default(""),
 
     // Mort authoring mode. off = legacy one-file-one-article pipeline (unchanged).

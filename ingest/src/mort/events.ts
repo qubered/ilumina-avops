@@ -112,7 +112,16 @@ export type EventSyncDeps = {
   deleteHashes: (sourceId: string, hashes: string[]) => Promise<void>;
 };
 
-export type EventSyncResult = { inserted: number; deleted: number; total: number; guarded: boolean };
+export type EventSyncResult = {
+  inserted: number;
+  deleted: number;
+  total: number;
+  guarded: boolean;
+  /** Rows newly inserted this run — forwarded to the assistant for embedding. */
+  insertedRows: EventRow[];
+  /** All current row hashes — the assistant prunes vectors not in this set. */
+  currentHashes: string[];
+};
 
 /**
  * Reconcile an events sheet into episodic memory. Bulk-delete guardrail: an
@@ -122,19 +131,16 @@ export type EventSyncResult = { inserted: number; deleted: number; total: number
 export async function syncEventSheet(sourceId: string, buffer: Buffer, deps: EventSyncDeps): Promise<EventSyncResult> {
   const rows = parseEventRows(buffer);
   const existing = await deps.getHashes(sourceId);
+  const currentHashes = rows.map((r) => r.rowHash);
 
   if (rows.length === 0 && existing.length > 0) {
-    return { inserted: 0, deleted: 0, total: 0, guarded: true };
+    return { inserted: 0, deleted: 0, total: 0, guarded: true, insertedRows: [], currentHashes };
   }
 
-  const { insert, deleteHashes } = diffEventHashes(
-    rows.map((r) => r.rowHash),
-    existing,
-  );
-  for (const r of rows) {
-    if (insert.has(r.rowHash)) await deps.insertRow(sourceId, r);
-  }
+  const { insert, deleteHashes } = diffEventHashes(currentHashes, existing);
+  const insertedRows = rows.filter((r) => insert.has(r.rowHash));
+  for (const r of insertedRows) await deps.insertRow(sourceId, r);
   if (deleteHashes.length) await deps.deleteHashes(sourceId, deleteHashes);
 
-  return { inserted: insert.size, deleted: deleteHashes.length, total: rows.length, guarded: false };
+  return { inserted: insert.size, deleted: deleteHashes.length, total: rows.length, guarded: false, insertedRows, currentHashes };
 }

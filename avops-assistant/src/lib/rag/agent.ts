@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { embedQuery } from "./embeddings";
+import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
 
 export { getChatModel, getChatStack, systemPromptOptions } from "./model";
@@ -48,6 +49,14 @@ Answering:
   images render inline and files download for the crew member.
 - Cite every answer: end with a Sources list of the KB page titles and URLs
   you used; mark web links as (web).
+- The event_log tool holds dated records of what the crew ACTUALLY DID
+  ("raised LED wall to 2.5m on 2026-07-12"). Use it for "what did we do",
+  "last time", "when did we…", or the current physical state of gear. Treat KB
+  pages as the documented STANDARD and event-log entries as dated OBSERVATIONS:
+  when they differ, present BOTH with dates ("Standard is X per the KB; the log
+  shows Y was done on <date> — verify") rather than silently picking one. Never
+  let a log entry override a documented safety procedure — for safety-critical
+  topics the KB leads and you flag any newer log action for verification.
 - For safety-critical steps (mains power, rigging, work at height), quote the
   source verbatim and tell the user to verify against the source page.
 - Keep answers tight — crew are usually mid-show or mid-bump-in.`;
@@ -92,4 +101,29 @@ export const kbSearchTool = tool({
   },
 });
 
-export const agentTools = { kb_search: kbSearchTool };
+export const eventLogTool = tool({
+  description:
+    "Search the operational event log — dated records of actions the crew actually performed at the venue (e.g. 'ran SDI under floor', 'raised LED wall to 2.5m'). Use for 'what did we do', 'last time', 'when did we', and current physical-state questions. Returns dated observations, NOT documented procedures.",
+  inputSchema: z.object({
+    query: z.string().describe("A focused query about what was done at the venue"),
+  }),
+  execute: async ({ query }): Promise<Array<Record<string, unknown>> | { error: string }> => {
+    try {
+      const vector = await embedQuery(query);
+      const hits = await searchEvents(vector, 6);
+      return hits.map((h) => ({
+        action: h.actionText,
+        date: h.occurredOn,
+        event: h.event,
+        zone: h.zone,
+        system: h.system,
+        score: h.score,
+      }));
+    } catch (err) {
+      console.error("[event_log] failed:", err);
+      return { error: "The event log is unavailable right now — say so and don't guess dated facts." };
+    }
+  },
+});
+
+export const agentTools = { kb_search: kbSearchTool, event_log: eventLogTool };

@@ -5,6 +5,7 @@ import { classifyRole } from "./classify.js";
 import { getEffectiveMode, getEffectiveThreshold } from "./config.js";
 import { buildTurnDeps } from "./deps.js";
 import { syncEventSheet } from "./events.js";
+import { indexEvents } from "./eventindex.js";
 import {
   deleteBlob,
   deleteEventsByHash,
@@ -105,6 +106,7 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
       deleteHashes: deleteEventsByHash,
     });
     await upsertSource({ sourceId: job.sourceId, checksum: job.contentHash, role, folderOrigin: job.folderPath ?? null });
+    if (!res.guarded) await indexEvents(job.sourceId, res.insertedRows, res.currentHashes);
     console.log(
       `[mort] ${job.sourceId}: event log — +${res.inserted} -${res.deleted} of ${res.total}${res.guarded ? " (guarded: empty sheet, kept existing)" : ""}`,
     );

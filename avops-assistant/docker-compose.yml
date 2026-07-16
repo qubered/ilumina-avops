@@ -187,8 +187,9 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
       INGEST_DEFAULT_COLLECTION: ${INGEST_DEFAULT_COLLECTION:-Imported}
       APP_URL: ${APP_URL}
-      # Mort → assistant internal KB search (single Qdrant owner).
+      # Mort → assistant internal KB search + event indexing (single Qdrant owner).
       ASSISTANT_KB_URL: ${ASSISTANT_KB_URL:-http://assistant:3000/api/internal/kb-search}
+      ASSISTANT_EVENTS_INDEX_URL: ${ASSISTANT_EVENTS_INDEX_URL:-http://assistant:3000/api/internal/index-events}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
       # Mort authoring mode: off (legacy) | shadow (propose only) | live.
       MORT_MODE: ${MORT_MODE:-off}
