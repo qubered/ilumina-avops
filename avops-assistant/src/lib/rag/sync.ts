@@ -10,12 +10,15 @@ import {
   type OutlineDocument,
 } from "../outline";
 import { rewriteAttachmentUrls } from "./attachments";
+import { EVENTS_COLLECTION } from "./events-store";
 import { chunkMarkdown } from "./chunker";
 import { embedBatch } from "./embeddings";
 import { parseMetadataBlock } from "./metadata";
 import {
+  COLLECTION,
   deleteDocPoints,
   ensureCollection,
+  getQdrant,
   metadataToPayload,
   upsertChunks,
 } from "./store";
@@ -133,6 +136,32 @@ export function isFullSyncRunning(): boolean {
 }
 
 /**
+ * Hard-reset the index: drop both Qdrant collections and forget every document
+ * and sync run. Nothing here reads Outline, so it works even when the wiki is
+ * already empty — which is the point. Used when starting Mort over from
+ * nothing (see ingest/RESET.md).
+ *
+ * A normal full sync also converges on an empty index once Outline is empty;
+ * this exists for the case where you want the collections themselves recreated
+ * clean rather than emptied point by point. Both are recreated on next use.
+ */
+export async function resetIndex(): Promise<{ docs: number; runs: number }> {
+  if (fullSyncRunning) throw new Error("A sync is running — wait for it to finish.");
+
+  const qdrant = getQdrant();
+  for (const collection of [COLLECTION, EVENTS_COLLECTION]) {
+    const { exists } = await qdrant.collectionExists(collection);
+    if (exists) await qdrant.deleteCollection(collection);
+  }
+
+  const docs = await db.delete(kbDocuments).returning({ id: kbDocuments.outlineId });
+  const runs = await db.delete(syncRuns).returning({ id: syncRuns.id });
+
+  console.log(`[sync] index reset — dropped ${docs.length} document(s) and ${runs.length} sync run(s)`);
+  return { docs: docs.length, runs: runs.length };
+}
+
+/**
  * Full sync: every collection → every published document. Records the run in
  * sync_runs and prunes kb_documents/points for docs that disappeared.
  */
@@ -178,11 +207,24 @@ export async function fullSync(
     }
 
     // Prune docs that no longer exist / are no longer published.
-    if (seenIds.length > 0) {
+    //
+    // `seenIds` being empty is a REAL state — every page deleted — and the old
+    // `if (seenIds.length > 0)` guard skipped the prune in exactly that case.
+    // So emptying Outline and hitting Sync left the whole index behind: the KB
+    // kept reporting documents that no longer existed, and the chat kept citing
+    // them. Empty means prune everything, not prune nothing.
+    //
+    // The one view we must NOT act on is "no docs seen, and errors along the
+    // way" — that's a failure to read Outline, not an empty Outline, and
+    // pruning on it would wipe a live index.
+    const readOutlineCleanly = seenIds.length > 0 || !firstError;
+    if (readOutlineCleanly) {
       const stale = await db
         .select({ outlineId: kbDocuments.outlineId })
         .from(kbDocuments)
-        .where(notInArray(kbDocuments.outlineId, seenIds));
+        // notInArray with [] is invalid SQL; no filter = every row is stale,
+        // which is precisely right when Outline came back empty.
+        .where(seenIds.length > 0 ? notInArray(kbDocuments.outlineId, seenIds) : undefined);
       for (const { outlineId } of stale) {
         await removeDocument(outlineId);
       }
