@@ -24,7 +24,11 @@ export const decisionSchema = z.object({
   targetDocId: z
     .string()
     .nullable()
-    .describe("Outline doc id (from a candidate) for UPDATE_ADDITIVE/ATTACH; null for CREATE/SKIP"),
+    .describe(
+      "For UPDATE_ADDITIVE/ATTACH: the targetDocId string copied EXACTLY from the candidate list " +
+        "(a UUID like 0d9c1e3a-4b2f-...). Never a list position, a number, or a title. " +
+        "null for CREATE/HOLD/SKIP.",
+    ),
   title: z.string().nullable().describe("Title for a CREATE, else null"),
   collection: z.string().nullable().describe("Collection name for a CREATE, else null"),
   confidence: z.number().min(0).max(1).describe("0-1 confidence this is the right action AND target"),
@@ -72,8 +76,9 @@ THEN judge: is this ARTICLE material or REFERENCE material?
 Rules:
 - ONE FILE DOES NOT MEAN ONE PAGE. Most files are not article material. Prefer attaching or
   holding over creating a page that only restates an artifact.
-- targetDocId MUST be one of the candidate doc ids listed below. Never invent one — if none
-  fit, use CREATE or HOLD.
+- targetDocId MUST be copied verbatim from the candidate list below — the long UUID after
+  "targetDocId:". Never a list position, a number, or a title. If no candidate fits, do not
+  invent one: use CREATE or HOLD.
 - You are shown the other files Mort already has. Use them: prefer the page that related
   files already feed, and reference those artifacts rather than duplicating their content.
 - Set confidence honestly. A weak candidate match means low confidence (it goes to review).
@@ -100,8 +105,12 @@ const MAX_INPUT = 40_000;
 export type DecideResult = { decision: Decision; tokens: number };
 
 export async function decide(input: DecideInput): Promise<DecideResult> {
+  // Do NOT number this list. An earlier "[0] … [1] …" rendering invited the model
+  // to answer with the list index ("1") instead of the doc id, which the
+  // invented-target guard then had to reject — so a correct decision died on
+  // formatting. Lead each line with the id it must copy.
   const candidateList = input.candidates
-    .map((c, i) => `  [${i}] docId=${c.docId} · ${c.title} (score ${c.score.toFixed(2)}) — ${c.breadcrumb}`)
+    .map((c) => `  - targetDocId: ${c.docId}\n      "${c.title}" (score ${c.score.toFixed(2)}) — ${c.breadcrumb}`)
     .join("\n");
 
   const relatedList = (input.relatedFiles ?? [])

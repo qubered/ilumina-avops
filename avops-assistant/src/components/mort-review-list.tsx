@@ -13,12 +13,31 @@ const ACTION_COLOR: Record<string, string> = {
 };
 
 const EXECUTABLE = new Set(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "tombstone"]);
+const NEEDS_TARGET = new Set(["UPDATE_ADDITIVE", "ATTACH"]);
 const APPROVE_LABEL: Record<string, string> = {
   CREATE: "Approve & write",
   UPDATE_ADDITIVE: "Approve & write",
   ATTACH: "Approve & attach",
   tombstone: "Approve removal",
 };
+
+/**
+ * Only offer Approve for something that can actually run. An ATTACH/UPDATE whose
+ * target was stripped (Mort guessed a doc id) has nowhere to go — offering the
+ * button just hands you a 422.
+ */
+function actionable(item: MortReviewItem): boolean {
+  if (!EXECUTABLE.has(item.action)) return false;
+  if (NEEDS_TARGET.has(item.action) && !item.target_doc_id) return false;
+  return true;
+}
+
+function whyNotActionable(item: MortReviewItem): string {
+  if (NEEDS_TARGET.has(item.action) && !item.target_doc_id) {
+    return "no valid target doc — Mort guessed one, so there's nothing to attach to. Dismiss it.";
+  }
+  return "flagged for a human — no auto-action";
+}
 
 export function MortReviewList({ items }: { items: MortReviewItem[] }) {
   const router = useRouter();
@@ -61,7 +80,7 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
             {item.source_id && <p className="mt-0.5 text-[12px] text-text-3">{item.source_id}</p>}
             {item.rationale && <p className="mt-1 text-text-2">{item.rationale}</p>}
             <div className="mt-2 flex items-center gap-2">
-              {EXECUTABLE.has(item.action) ? (
+              {actionable(item) ? (
                 <button
                   onClick={() => decide(item.id, "approve")}
                   disabled={busy === item.id}
@@ -70,14 +89,14 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
                   {busy === item.id ? "…" : APPROVE_LABEL[item.action] ?? "Approve"}
                 </button>
               ) : (
-                <span className="text-[11px] text-text-3">flagged for a human — no auto-action</span>
+                <span className="text-[11px] text-text-3">{whyNotActionable(item)}</span>
               )}
               <button
                 onClick={() => decide(item.id, "reject")}
                 disabled={busy === item.id}
                 className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
-                {EXECUTABLE.has(item.action) ? "Reject" : "Dismiss"}
+                {actionable(item) ? "Reject" : "Dismiss"}
               </button>
             </div>
           </li>
