@@ -6,5 +6,6 @@ set WATCH_FOLDER=C:\Users\you\OneDrive - Org\Documentation
 set INGEST_URL=https://ingest.qubered.com/ingest
 set INGEST_API_KEY=replace-me
 
+pip install -q -r "%~dp0requirements.txt"
 python "%~dp0mort_watcher.py" %*
 pause
