@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Decision } from "./decide.js";
+import type { KbHit } from "./kbclient.js";
 import { runMortTurn, type TurnDeps, type TurnFile } from "./turn.js";
 
 function makeDecision(over: Partial<Decision>): Decision {
@@ -28,10 +29,15 @@ type Calls = {
   journal: string[];
 };
 
-function fakeDeps(decision: Decision, withAttach = false): { deps: TurnDeps; calls: Calls } {
+/** A KB candidate as kb_search would return it. */
+function hit(docId: string): KbHit {
+  return { docId, title: "Cand", url: "/u", breadcrumb: "b", score: 0.9, text: "t" };
+}
+
+function fakeDeps(decision: Decision, withAttach = false, candidates: KbHit[] = []): { deps: TurnDeps; calls: Calls } {
   const calls: Calls = { created: 0, updated: [], attached: [], reviews: [], journal: [] };
   const deps: TurnDeps = {
-    kbSearch: async () => [],
+    kbSearch: async () => candidates,
     getDocumentText: async () => null,
     decide: async () => ({ decision, tokens: 1234 }),
     updateRegion: async (docId) => {
@@ -88,7 +94,11 @@ test("live + confident CREATE → creates the doc", async () => {
 });
 
 test("live + confident UPDATE_ADDITIVE with target → updates that doc's region", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "UPDATE_ADDITIVE", targetDocId: "doc-42", confidence: 0.9 }));
+  const { deps, calls } = fakeDeps(
+    makeDecision({ action: "UPDATE_ADDITIVE", targetDocId: "doc-42", confidence: 0.9 }),
+    false,
+    [hit("doc-42")],
+  );
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "updated");
   assert.deepEqual(calls.updated, [{ docId: "doc-42" }]);
@@ -117,11 +127,49 @@ test("ATTACH without an attach executor → proposed for review", async () => {
 });
 
 test("live + confident ATTACH with executor → attaches, no review", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true);
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true, [
+    hit("doc-9"),
+  ]);
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "attached");
   assert.deepEqual(calls.attached, [{ docId: "doc-9", sourceId: FILE.sourceId }]);
   assert.equal(calls.reviews.length, 0);
+});
+
+test("live + confident ATTACH to an INVENTED target → review, never executed", async () => {
+  // kb_search returned nothing, but the model emitted a plausible doc id anyway.
+  // Acting on it 403s against Outline — or lands on a real but wrong doc.
+  const { deps, calls } = fakeDeps(
+    makeDecision({ action: "ATTACH", targetDocId: "made-up-id", confidence: 0.99 }),
+    true,
+    [],
+  );
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "review");
+  assert.equal(calls.attached.length, 0, "must not attach to a guessed doc");
+  assert.equal(calls.reviews.length, 1);
+});
+
+test("live + confident UPDATE to an INVENTED target → review, never written", async () => {
+  const { deps, calls } = fakeDeps(
+    makeDecision({ action: "UPDATE_ADDITIVE", targetDocId: "ghost", confidence: 0.99 }),
+    false,
+    [hit("real-doc-1")],
+  );
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "review");
+  assert.equal(calls.updated.length, 0);
+});
+
+test("live + confident UPDATE to a REAL candidate still executes", async () => {
+  const { deps, calls } = fakeDeps(
+    makeDecision({ action: "UPDATE_ADDITIVE", targetDocId: "real-doc-1", confidence: 0.9 }),
+    false,
+    [hit("real-doc-1")],
+  );
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "updated");
+  assert.deepEqual(calls.updated, [{ docId: "real-doc-1" }]);
 });
 
 test("shadow ATTACH always proposes even with an executor", async () => {
