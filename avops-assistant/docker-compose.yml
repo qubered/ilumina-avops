@@ -198,6 +198,13 @@ services:
       # Mort authoring mode: off (legacy) | shadow (propose only) | live.
       MORT_MODE: ${MORT_MODE:-off}
       MORT_CONFIDENCE_THRESHOLD: ${MORT_CONFIDENCE_THRESHOLD:-0.6}
+      # Ceiling on a day's model spend. 0 = unlimited, which is the wrong default
+      # for an autonomous live Mort: R7 made a turn two model calls and a page
+      # write re-check its siblings, so a bulk ingest can cost several times what
+      # the file count suggests. Set it.
+      MORT_DAILY_TOKEN_CAP: ${MORT_DAILY_TOKEN_CAP:-0}
+      # How often Mort looks over the whole corpus (R7). 0 = never.
+      MORT_DREAM_INTERVAL_HOURS: ${MORT_DREAM_INTERVAL_HOURS:-24}
     restart: unless-stopped
 
   # Widget-injection layer only: sub_filter adds the chat bubble script to
