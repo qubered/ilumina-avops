@@ -11,7 +11,7 @@ that are no longer true:
 |---|---|---|
 | Postgres (`mort_*`) | Everything he learned, decided, and holds | `scripts/reset-mort.ts` |
 | Outline | The pages he wrote | `scripts/reset-mort.ts` |
-| Qdrant | The search index over those pages | step 2, by hand |
+| Qdrant + `kb_documents` | The search index over those pages | **Clear index** on `/admin` |
 | Watcher SQLite | Which files it has already sent | step 3, by hand |
 
 The classic failure is clearing memory but not Outline. Mort's registry is what
@@ -42,19 +42,20 @@ It deletes the Outline pages **before** truncating the tables, because
 delete it stops and leaves the tables alone, rather than orphaning pages that
 nothing remembers he made.
 
-## 2. Qdrant
+## 2. The index
 
-The assistant owns the index; the ingest service can't reach it. Both collections
-are recreated automatically on next use, so deleting them is safe:
-
-```bash
-docker compose exec qdrant sh -lc '
-  for c in ilumina_kb ilumina_events; do
-    curl -s -X DELETE "http://localhost:6333/collections/$c" && echo " <- $c"
-  done'
-```
+On `/admin`, click **Clear index** (twice — it asks). That drops both Qdrant
+collections and forgets every indexed document and sync run. Everything it drops
+is derived from Outline, so a re-sync rebuilds it.
 
 Skipping this leaves the chat citing pages that no longer exist.
+
+**Re-sync alone is also enough now**, but it wasn't before: `fullSync` skipped
+its prune step whenever it saw zero documents, so emptying Outline and hitting
+*Re-sync now* left the entire index in place — the KB kept reporting documents
+that no longer existed. Fixed; an empty Outline now prunes everything. **Clear
+index** remains the surer path, because it recreates the collections clean
+rather than emptying them point by point.
 
 ## 3. The watcher (on the OneDrive PC)
 
