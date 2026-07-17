@@ -119,10 +119,17 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
   const mode = await getEffectiveMode();
   if (mode === "off") return;
 
-  const role = classifyRole({ fileName: job.fileName, contentType: job.contentType, folderPath: job.folderPath ?? undefined });
+  // Name-based pre-check: the event-log designation is a naming convention, so it
+  // needs no extraction (and this avoids parsing a big sheet we're not authoring).
+  const preRole = classifyRole({
+    fileName: job.fileName,
+    contentType: job.contentType,
+    folderPath: job.folderPath ?? undefined,
+  });
 
   // Event log (R1): reconcile rows into episodic memory instead of authoring a doc.
-  if (role === "event_log") {
+  if (preRole === "event_log") {
+    const role = preRole;
     const res = await syncEventSheet(job.sourceId, job.data, {
       getHashes: getEventHashes,
       insertRow: insertEvent,
@@ -136,14 +143,24 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
     return;
   }
 
+  const extraction = await extract(job.fileName, job.contentType, job.data);
+
+  // Now classify with the CONTENT in hand. Filename alone is not enough: an
+  // extensionless SOP arrives as octet-stream and would be filed as an artifact
+  // even though it's a document full of prose.
+  const role = classifyRole({
+    fileName: job.fileName,
+    contentType: job.contentType,
+    folderPath: job.folderPath ?? undefined,
+    extraction: { kind: extraction.kind, text: extraction.markdown },
+  });
+
   // Reference/media may become an ATTACH → stash the bytes so the turn (live) or
   // a later approval (shadow) can upload them.
   const mightAttach = role === "reference" || role === "media";
   if (mightAttach) {
     await saveBlob(job.sourceId, { fileName: job.fileName, contentType: job.contentType, data: job.data });
   }
-
-  const extraction = await extract(job.fileName, job.contentType, job.data);
   const outcome = await runMortTurn(
     {
       sourceId: job.sourceId,
@@ -151,6 +168,7 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
       folderPath: job.folderPath ?? undefined,
       contentType: job.contentType,
       extractedMarkdown: extraction.markdown,
+      extractionKind: extraction.kind,
     },
     { mode: mode === "live" ? "live" : "shadow", confidenceThreshold: await getEffectiveThreshold() },
     d,

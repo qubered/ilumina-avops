@@ -31,7 +31,26 @@ function looksLikeEventLog(fileName: string, folderPath?: string): boolean {
   return EVENT_LOG_HINTS.some((h) => hay.includes(h));
 }
 
-export function classifyRole(input: { fileName: string; contentType?: string; folderPath?: string }): FileRole {
+/**
+ * Does the extracted text read like a document a person would READ, rather than
+ * mojibake from a binary that fell back to UTF-8 decoding? Replacement chars and
+ * control bytes say "artifact"; clean prose says "article material".
+ */
+function looksLikeDocumentText(text: string): boolean {
+  const sample = text.slice(0, 4000);
+  if (sample.trim().length < 200) return false;
+  const junk = (sample.match(/[\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) ?? []).length;
+  return junk / sample.length < 0.02;
+}
+
+export function classifyRole(input: {
+  fileName: string;
+  contentType?: string;
+  folderPath?: string;
+  /** What came out of the file. Decisive when the name/type say nothing — plenty
+   *  of real documents arrive with no extension and a generic octet-stream type. */
+  extraction?: { kind: string; text: string };
+}): FileRole {
   const e = ext(input.fileName);
   const ct = (input.contentType ?? "").toLowerCase();
 
@@ -47,7 +66,25 @@ export function classifyRole(input: { fileName: string; contentType?: string; fo
   if (SHEET.has(e) || ct.includes("spreadsheet") || ct.includes("excel")) return "structured";
   if (MEDIA.has(e) || ct.startsWith("image/") || ct.startsWith("video/") || ct.startsWith("audio/")) return "media";
   if (SLIDES.has(e) || ct.includes("presentationml")) return "reference";
-  if (REFERENCE.has(e) || ct === "application/octet-stream") return "reference";
+  if (REFERENCE.has(e)) return "reference";
+
+  // Nothing in the name or type settled it. Plenty of real documents arrive with
+  // no extension (and therefore a generic octet-stream type) — judging those on
+  // the filename alone filed whole SOPs as artifacts. Trust what came out of the
+  // file instead.
+  if (input.extraction) {
+    const { kind, text } = input.extraction;
+    if (kind === "image") return "media";
+    if (kind === "spreadsheet") {
+      return looksLikeEventLog(input.fileName, input.folderPath) ? "event_log" : "structured";
+    }
+    if (kind === "pptx") return "reference";
+    // Real prose someone would read ⇒ article material, whatever it's called.
+    if (looksLikeDocumentText(text)) return "truth";
+    return "reference"; // extracted, but it's not prose — an artifact
+  }
+
+  if (ct === "application/octet-stream") return "reference";
 
   // Unknown → treat as a reference artifact (attach, don't transcribe) — the
   // safe default per the source-of-truth hierarchy.
