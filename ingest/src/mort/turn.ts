@@ -91,6 +91,14 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
     tokens,
   };
 
+  // The model may only target a doc we actually showed it. When kb_search returns
+  // nothing (KB empty, or the internal boundary is misconfigured) a model will
+  // still happily emit a plausible-looking id — which either 403s against Outline
+  // or, far worse, lands on a real but wrong doc. Treat an invented target as an
+  // unusable decision and send it to a human.
+  const candidateIds = new Set(candidates.map((c) => c.docId));
+  const inventedTarget = decision.targetDocId != null && !candidateIds.has(decision.targetDocId);
+
   // Mort's region = a rendered metadata header (model's classification + facts
   // the code already knows) followed by the cleaned body.
   const regionBody = [
@@ -113,16 +121,24 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
     return { role, decided: "SKIP", executed: "skipped" };
   }
 
-  // Gate: shadow mode, low confidence, or an explicit REVIEW → propose, don't execute.
-  const gated = cfg.mode === "shadow" || decision.confidence < cfg.confidenceThreshold || decision.action === "REVIEW";
+  // Gate: shadow mode, low confidence, an explicit REVIEW, or a target the model
+  // invented → propose, don't execute.
+  const gated =
+    cfg.mode === "shadow" ||
+    decision.confidence < cfg.confidenceThreshold ||
+    decision.action === "REVIEW" ||
+    inventedTarget;
   if (gated) {
     await deps.enqueueReview({
       action: decision.action,
       sourceId: file.sourceId,
-      targetDocId: decision.targetDocId,
-      rationale: decision.rationale,
+      // Don't pass on a made-up id — a human would try to act on it.
+      targetDocId: inventedTarget ? null : decision.targetDocId,
+      rationale: inventedTarget
+        ? `${decision.rationale} [target '${decision.targetDocId}' is not one of the KB candidates — Mort guessed it, so this needs a human]`
+        : decision.rationale,
       payload: { title: decision.title, collection: decision.collection, regionBody },
-      dedupeKey: `${decision.action}:${file.sourceId}:${decision.targetDocId ?? "new"}`,
+      dedupeKey: `${decision.action}:${file.sourceId}:${(inventedTarget ? null : decision.targetDocId) ?? "new"}`,
     });
     await deps.journal({ ...base, action: `proposed:${decision.action}` });
     return { role, decided: decision.action, executed: "review" };
