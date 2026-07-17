@@ -80,14 +80,13 @@ you set it.
 
 Start in **shadow** and read the proposals before letting him write:
 
-```bash
-curl -s -X POST http://localhost:3001/mort/config \
-  -H "Authorization: Bearer $INGEST_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"shadow"}'
-```
+Use the mode switcher on `/admin/mort` — the ingest service publishes no host
+port, so there's nothing to curl from the host. (`localhost:3001` is the
+*assistant*.) If you'd rather do it from a shell:
 
-Or use the mode switcher on `/admin/mort`.
+```bash
+docker compose exec ingest node -e "fetch('http://localhost:'+process.env.PORT+'/mort/config',{method:'POST',headers:{Authorization:'Bearer '+process.env.INGEST_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({mode:'shadow'})}).then(r=>r.text()).then(console.log)"
+```
 
 Then restart the watcher. It finds an empty manifest, treats every file as new,
 and resends the folder. Watch it land on `/admin/mort` — the activity panel shows
@@ -104,12 +103,17 @@ files are decided when he knows almost nothing, so expect more `HOLD`s at the
 start than at the end. That's the design working — he files what he can't place
 yet and re-checks it once a page it belongs on appears.
 
-If you want him to take stock once the dust settles, make him dream:
+Once the dust settles, make him dream. The ingest service publishes no host
+port, so go through the container (or the tunnel hostname):
 
 ```bash
-curl -s -X POST http://localhost:3001/mort/dream \
-  -H "Authorization: Bearer $INGEST_API_KEY"
+docker compose exec ingest node -e "fetch('http://localhost:'+process.env.PORT+'/mort/dream',{method:'POST',headers:{Authorization:'Bearer '+process.env.INGEST_API_KEY}}).then(r=>r.text()).then(console.log)"
 ```
 
-That's the pass that asks what no single file can: what's missing, what
-contradicts, what should merge.
+A dream does two things: re-checks every artifact still held with nowhere to go
+(this is what actually gets files attached once their pages exist), and asks what
+no single file can — what's missing, what contradicts, what should merge.
+
+**Re-sync the KB index first.** Mort finds pages to attach to via `kb_search`,
+which reads Qdrant. A page that exists in Outline but isn't indexed is invisible
+to him, so he'll hold the file again and the dream will have been for nothing.

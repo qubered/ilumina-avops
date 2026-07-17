@@ -487,6 +487,34 @@ export async function listLibrary(q?: string, limit = 200): Promise<LibraryRow[]
   }));
 }
 
+/**
+ * Artifacts Mort is holding that never found a home: he has the bytes, but they
+ * feed no page at all.
+ *
+ * A file is held when no page it belongs on existed yet, and it's re-checked
+ * when one appears. But that trigger is a page WRITE — so once a bulk ingest
+ * finishes and the writes stop, anything still held stays held forever, however
+ * many pages it now obviously belongs on. This is the list the dream re-checks
+ * to close that gap.
+ */
+export async function listUnfiledArtifacts(limit = 200): Promise<
+  Array<{ sourceId: string; folderOrigin: string | null; checksum: string | null }>
+> {
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.folder_origin, s.checksum
+       FROM mort_sources s
+       JOIN mort_blobs b ON b.source_id = s.source_id
+      WHERE s.status = 'active'
+        AND s.checksum IS NOT NULL
+        AND NOT EXISTS (
+              SELECT 1 FROM mort_source_doc_relations r WHERE r.source_id = s.source_id)
+      ORDER BY s.updated_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 500)],
+  );
+  return rows.map((r) => ({ sourceId: r.source_id, folderOrigin: r.folder_origin, checksum: r.checksum }));
+}
+
 // --- Corpus digests (R7 dream) ---------------------------------------------
 
 /**

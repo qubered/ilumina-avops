@@ -28,6 +28,7 @@ import {
   insertEvent,
   libraryDigest,
   listAttachableRelatives,
+  listUnfiledArtifacts,
   saveBlob,
   upsertSource,
 } from "./memory.js";
@@ -124,11 +125,52 @@ async function drain(): Promise<void> {
 }
 
 /**
- * Step back and look at the whole corpus (R7). Proposals only — see dream.ts for
- * why this may never write. Exported so the admin route can trigger one on
- * demand rather than waiting for the interval.
+ * Re-check every artifact Mort is holding that still feeds no page.
+ *
+ * A held file is normally re-checked when a page it might belong on is written.
+ * That trigger is fine while files are arriving, and useless the moment they
+ * stop: once a bulk ingest finishes, nothing writes a page, so nothing re-checks
+ * anything, and every artifact that arrived before its page stays held forever.
+ * That's the state "he made the pages but attached nothing to them" describes.
+ *
+ * Each file gets a normal turn — same gating, same confidence threshold — so in
+ * shadow this proposes and in live it attaches.
  */
-export async function runDream(): Promise<{ raised: number; skipped: number } | null> {
+async function recheckUnfiled(): Promise<number> {
+  const unfiled = await listUnfiledArtifacts();
+  let queued = 0;
+  for (const f of unfiled) {
+    const blob = await getBlob(f.sourceId);
+    if (!blob || !f.checksum) continue;
+    const ok = await enqueueJob({
+      sourceId: f.sourceId,
+      fileName: blob.fileName,
+      contentType: blob.contentType,
+      folderPath: f.folderOrigin,
+      contentHash: f.checksum,
+      data: blob.data,
+      force: true, // same bytes; the KB around them is what changed
+    });
+    if (ok) queued++;
+  }
+  if (queued) {
+    console.log(`[mort] dream — re-checking ${queued} held file(s) against the KB as it now stands`);
+    kickWorker();
+  }
+  return queued;
+}
+
+/**
+ * Step back and look at the whole corpus (R7). Two halves:
+ *
+ *  1. Re-check what's still homeless — the cheap, mechanical half (no model).
+ *  2. Ask what only the whole corpus can answer — what's missing, what
+ *     contradicts, what should merge. Proposals only; see dream.ts.
+ *
+ * Exported so the admin route can trigger one on demand rather than waiting for
+ * the interval.
+ */
+export async function runDream(): Promise<{ raised: number; skipped: number; rechecked: number } | null> {
   const mode = await getEffectiveMode();
   if (mode === "off") return null;
   if (await overDailyCap()) {
@@ -136,8 +178,13 @@ export async function runDream(): Promise<{ raised: number; skipped: number } | 
     return null;
   }
 
+  // First, and regardless of what the model makes of the corpus: anything held
+  // with nowhere to go gets another look. This costs nothing and is the half
+  // that actually moves files onto pages.
+  const rechecked = await recheckUnfiled();
+
   const [library, docs] = await Promise.all([libraryDigest(), docDigest()]);
-  if (!library.length) return { raised: 0, skipped: 0 };
+  if (!library.length) return { raised: 0, skipped: 0, rechecked };
 
   const { proposals, tokens } = await dream({ library, docs });
   const valid = validateProposals(proposals, { library, docs });
@@ -159,14 +206,14 @@ export async function runDream(): Promise<{ raised: number; skipped: number } | 
 
   await appendJournal({
     action: "dream",
-    rationale: `looked at ${library.length} file(s) and ${docs.length} page(s) — raised ${raised} new of ${valid.length}`,
+    rationale: `looked at ${library.length} file(s) and ${docs.length} page(s) — re-checked ${rechecked} held, raised ${raised} new of ${valid.length}`,
     tokens,
     model: env.INGEST_AI_PROVIDER,
   });
   console.log(
     `[mort] dreamt over ${library.length} file(s) and ${docs.length} page(s) — ${raised} new proposal(s), ${valid.length - raised} already known`,
   );
-  return { raised, skipped: valid.length - raised };
+  return { raised, skipped: valid.length - raised, rechecked };
 }
 
 async function processJob(job: MortJob, d: TurnDeps): Promise<void> {

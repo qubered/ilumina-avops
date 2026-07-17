@@ -237,8 +237,21 @@ re-check A, forever.
 
 ### R7.3 — The dream
 `dream.ts` + `proposal.ts`, on `MORT_DREAM_INTERVAL_HOURS` (default 24, `0` = off) or
-`POST /mort/dream`. Reads a digest of the whole library + doc registry — summaries only,
-never bodies — and raises `MISSING_PAGE` / `CONTRADICTION` / `MERGE` / `SPLIT`.
+`POST /mort/dream`. Two halves.
+
+**Re-check the homeless** (no model, always runs first). Every artifact Mort holds that
+feeds no page gets re-queued for a normal turn — same gating, same threshold.
+
+This closes a hole in R7.2. A held file is re-checked when a page is *written*, which is a
+fine trigger while files are arriving and useless the moment they stop: after a bulk ingest
+nothing writes a page, so nothing re-checks anything, and every artifact that arrived before
+its page stays held **forever**. Observed in production as "he made the pages but attached
+nothing to them". The page-write trigger handles the steady state; this handles the corpus
+settling.
+
+**Ask the corpus-level questions** (one model call). Reads a digest of the library + doc
+registry — summaries only, never bodies — and raises `MISSING_PAGE` / `CONTRADICTION` /
+`MERGE` / `SPLIT`.
 
 - **Never writes.** Every question it asks is a judgement call about what the KB should
   *be*; that's the user's call. Proposals only.
