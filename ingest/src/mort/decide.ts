@@ -2,7 +2,8 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { MORT_AUTHORING_PREAMBLE } from "./identity.js";
 import type { KbHit } from "./kbclient.js";
-import { getModel } from "./model.js";
+import { getModel, modelLabel } from "./model.js";
+import { withRateLimitRetry } from "../ratelimit.js";
 import type { FileRole } from "./types.js";
 
 /**
@@ -126,12 +127,31 @@ export async function decide(input: DecideInput): Promise<DecideResult> {
     .filter(Boolean)
     .join("\n");
 
-  const { object, usage } = await generateObject({
-    model: getModel(),
-    schema: decisionSchema,
-    maxRetries: 0,
-    system: `${MORT_AUTHORING_PREAMBLE}\n\n${INSTRUCTIONS}`,
-    prompt,
-  });
-  return { decision: object, tokens: usage?.totalTokens ?? 0 };
+  try {
+    // Rate limits are handled here (honouring Retry-After) — free/shared tiers 429
+    // constantly. maxRetries covers a transient malformed structured response.
+    const { object, usage } = await withRateLimitRetry(() =>
+      generateObject({
+        model: getModel(),
+        schema: decisionSchema,
+        maxRetries: 2,
+        system: `${MORT_AUTHORING_PREAMBLE}\n\n${INSTRUCTIONS}`,
+        prompt,
+      }),
+    );
+    return { decision: object, tokens: usage?.totalTokens ?? 0 };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // "No object generated" is cryptic and gets blamed on the file. It almost
+    // never is: deciding needs a model that can hold a structured schema, and
+    // small/free models simply can't.
+    if (/no object generated|could not parse|did not return a response|invalid json|provider returned error/i.test(msg)) {
+      throw new Error(
+        `${msg} — ${modelLabel()} could not produce a valid decision. This is the model, not the file: ` +
+          `Mort's decision is a structured-output task that small/free models fail at. Point ` +
+          `INGEST_AI_PROVIDER/INGEST_MODEL at a capable model (e.g. anthropic + claude-sonnet-5). See ingest/README.md.`,
+      );
+    }
+    throw err;
+  }
 }
