@@ -2,21 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Decision } from "./decide.js";
 import type { KbHit } from "./kbclient.js";
+import type { Understanding } from "./understand.js";
 import { runMortTurn, type TurnDeps, type TurnFile } from "./turn.js";
+
+const UNDERSTANDING: Understanding = {
+  summary: "Word procedure for LED wall rigging",
+  zone: ["Main Stage"],
+  system: ["Lighting"],
+  entities: ["LED wall"],
+  docType: "How-to",
+};
 
 function makeDecision(over: Partial<Decision>): Decision {
   return {
     action: "CREATE",
-    summary: "Word procedure for LED wall rigging",
     targetDocId: null,
     title: "New Doc",
     collection: "Lighting",
     confidence: 0.9,
     rationale: "because",
-    zone: ["Main Stage"],
-    system: ["Lighting"],
-    docType: "How-to",
-    entities: ["LED wall"],
+    relatedSourceIds: [],
     bodyMarkdown: "## Steps\n\nDo the thing.",
     ...over,
   };
@@ -28,18 +33,29 @@ type Calls = {
   attached: Array<{ docId: string; sourceId: string }>;
   reviews: Array<{ action: string }>;
   journal: string[];
+  /** Every query gather() fired, so tests can assert on retrieval breadth. */
+  searches: string[];
 };
 
 /** A KB candidate as kb_search would return it. */
-function hit(docId: string): KbHit {
-  return { docId, title: "Cand", url: "/u", breadcrumb: "b", score: 0.9, text: "t" };
+function hit(docId: string, score = 0.9): KbHit {
+  return { docId, title: "Cand", url: "/u", breadcrumb: "b", score, text: "t" };
 }
 
-function fakeDeps(decision: Decision, withAttach = false, candidates: KbHit[] = []): { deps: TurnDeps; calls: Calls } {
-  const calls: Calls = { created: 0, updated: [], attached: [], reviews: [], journal: [] };
+function fakeDeps(
+  decision: Decision,
+  withAttach = false,
+  candidates: KbHit[] = [],
+  over: Partial<TurnDeps> = {},
+): { deps: TurnDeps; calls: Calls } {
+  const calls: Calls = { created: 0, updated: [], attached: [], reviews: [], journal: [], searches: [] };
   const deps: TurnDeps = {
-    kbSearch: async () => candidates,
+    kbSearch: async (q) => {
+      calls.searches.push(q);
+      return candidates;
+    },
     getDocumentText: async () => null,
+    understand: async () => ({ understanding: UNDERSTANDING, tokens: 100 }),
     decide: async () => ({ decision, tokens: 1234 }),
     updateRegion: async (docId) => {
       calls.updated.push({ docId });
@@ -60,6 +76,7 @@ function fakeDeps(decision: Decision, withAttach = false, candidates: KbHit[] = 
     journal: async (e) => {
       calls.journal.push(e.action);
     },
+    ...over,
   };
   return { deps, calls };
 }
@@ -129,9 +146,9 @@ test("HOLD in shadow mode is still just held (not queued)", async () => {
 });
 
 test("understanding is recorded on every path, even SKIP", async () => {
-  const { deps } = fakeDeps(makeDecision({ action: "SKIP", summary: "duplicate of the v3 show file" }));
+  const { deps } = fakeDeps(makeDecision({ action: "SKIP" }));
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
-  assert.equal(out.understanding.summary, "duplicate of the v3 show file");
+  assert.equal(out.understanding.summary, "Word procedure for LED wall rigging");
   assert.deepEqual(out.understanding.entities, ["LED wall"]);
 });
 
@@ -140,11 +157,71 @@ test("the library is offered to the decision", async () => {
   const { deps } = fakeDeps(makeDecision({ action: "HOLD" }));
   deps.listRelatedFiles = async () => [{ sourceId: "Lighting/MainStage_v3.show.gz", role: "reference", summary: "old show file" }];
   deps.decide = async (input) => {
-    seen = input.relatedFiles;
+    seen = input.gathered.library;
     return { decision: makeDecision({ action: "HOLD" }), tokens: 0 };
   };
   await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.deepEqual(seen, [{ sourceId: "Lighting/MainStage_v3.show.gz", role: "reference", summary: "old show file" }]);
+});
+
+test("the library is queried by what the file is ABOUT, not just its folder", async () => {
+  // The R7 fix. Before, this lookup only got folderOrigin, so a related file
+  // sitting in another folder was invisible however obviously connected.
+  let seen: unknown;
+  const { deps } = fakeDeps(makeDecision({ action: "HOLD" }));
+  deps.listRelatedFiles = async (params) => {
+    seen = params;
+    return [];
+  };
+  await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.deepEqual(seen, {
+    excludeSourceId: "Lighting/E2.docx",
+    folderOrigin: "Lighting",
+    system: ["Lighting"],
+    entities: ["LED wall"],
+  });
+});
+
+test("retrieval searches several axes, not just folder+filename", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "HOLD" }));
+  await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.ok(calls.searches.includes("Lighting E2"), "placement query");
+  assert.ok(calls.searches.includes("Word procedure for LED wall rigging"), "semantic query");
+  assert.ok(calls.searches.includes("LED wall"), "entity query");
+  assert.ok(calls.searches.includes("Lighting Main Stage"), "facet query");
+});
+
+test("understanding drives the decision, and its tokens are billed", async () => {
+  let seen: unknown;
+  let billed: number | undefined;
+  const { deps } = fakeDeps(makeDecision({ action: "HOLD" }));
+  deps.decide = async (input) => {
+    seen = input.understanding;
+    return { decision: makeDecision({ action: "HOLD" }), tokens: 1000 };
+  };
+  deps.journal = async (e) => {
+    billed = e.tokens;
+  };
+  await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.deepEqual(seen, UNDERSTANDING);
+  assert.equal(billed, 1100, "both passes count against the daily cap");
+});
+
+test("a decision that names a library file Mort never offered doesn't get linked", async () => {
+  // Same reasoning as the invented-target guard: a Related link to a file that
+  // doesn't exist reads as authoritative and is worse than no link at all.
+  let body = "";
+  const { deps } = fakeDeps(
+    makeDecision({ action: "CREATE", relatedSourceIds: ["Lighting/real.pdf", "Lighting/ghost.pdf"] }),
+  );
+  deps.listRelatedFiles = async () => [{ sourceId: "Lighting/real.pdf", role: "reference", summary: "s" }];
+  deps.createDoc = async (args) => {
+    body = args.regionBody;
+    return "doc-new";
+  };
+  await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.match(body, /Related: Lighting\/real\.pdf/);
+  assert.doesNotMatch(body, /ghost/);
 });
 
 test("SKIP → nothing executed", async () => {
@@ -156,7 +233,9 @@ test("SKIP → nothing executed", async () => {
 });
 
 test("ATTACH without an attach executor → proposed for review", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-7", confidence: 0.9 }));
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-7", confidence: 0.9 }), false, [
+    hit("doc-7"),
+  ]);
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.reviews[0].action, "ATTACH");
@@ -172,18 +251,28 @@ test("live + confident ATTACH with executor → attaches, no review", async () =
   assert.equal(calls.reviews.length, 0);
 });
 
-test("live + confident ATTACH to an INVENTED target → review, never executed", async () => {
+test("ATTACH to an INVENTED target → held, never attached and never review noise", async () => {
   // kb_search returned nothing, but the model emitted a plausible doc id anyway.
-  // Acting on it 403s against Outline — or lands on a real but wrong doc.
+  // Acting on it 403s against Outline — or lands on a real but wrong doc. And
+  // there's nothing a human could approve, so it's not a proposal: remember the
+  // file and move on.
   const { deps, calls } = fakeDeps(
     makeDecision({ action: "ATTACH", targetDocId: "made-up-id", confidence: 0.99 }),
     true,
     [],
   );
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
-  assert.equal(out.executed, "review");
+  assert.equal(out.executed, "held");
   assert.equal(calls.attached.length, 0, "must not attach to a guessed doc");
-  assert.equal(calls.reviews.length, 1);
+  assert.equal(calls.reviews.length, 0, "nothing to approve — don't queue it");
+});
+
+test("ATTACH with no target at all → held (the page doesn't exist yet)", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: null, confidence: 0.9 }), true);
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "held");
+  assert.equal(calls.reviews.length, 0);
+  assert.equal(calls.attached.length, 0);
 });
 
 test("live + confident UPDATE to an INVENTED target → review, never written", async () => {
@@ -209,7 +298,9 @@ test("live + confident UPDATE to a REAL candidate still executes", async () => {
 });
 
 test("shadow ATTACH always proposes even with an executor", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true);
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true, [
+    hit("doc-9"),
+  ]);
   const out = await runMortTurn(FILE, { mode: "shadow", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.attached.length, 0);

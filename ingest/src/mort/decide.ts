@@ -1,26 +1,28 @@
 import { generateObject } from "ai";
 import { z } from "zod";
+import type { Gathered } from "./gather.js";
 import { MORT_AUTHORING_PREAMBLE } from "./identity.js";
-import type { KbHit } from "./kbclient.js";
 import { getModel, modelLabel } from "./model.js";
 import { withRateLimitRetry } from "../ratelimit.js";
+import type { Understanding } from "./understand.js";
 import type { FileRole } from "./types.js";
 
 /**
- * Mort's single structured decision (MORT_PLAN §v1.3). One LLM call per file:
- * given the file, its role, and KB candidates, decide how the KB should change.
- * NOT a multi-step agent loop (that is R6).
+ * Pass 3 of a Mort turn (MORT_PLAN §R7): given the file, what Mort understood it
+ * to be, and everything related that gather() pulled up — decide how the KB
+ * should change.
+ *
+ * This used to also produce the understanding (summary/zone/system/entities).
+ * It no longer does: understand() owns that, which both breaks the retrieval
+ * chicken-and-egg and shrinks this schema. Structured output is where cheap
+ * models fail, and the failures scale with schema size — so the call that must
+ * emit a whole article body is the one that can least afford extra fields.
+ *
+ * Still NOT a multi-step agent loop (that is R6).
  */
 
 export const decisionSchema = z.object({
   action: z.enum(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "HOLD", "REVIEW", "SKIP"]),
-  summary: z
-    .string()
-    .describe(
-      "One line: what this file IS (e.g. 'grandMA3 show file for Main Stage, v4', " +
-        "'Word procedure for E2 camera patching'). ALWAYS fill this in — it goes in Mort's " +
-        "library so he can find and reference this file later, even if it never becomes an article.",
-    ),
   targetDocId: z
     .string()
     .nullable()
@@ -33,14 +35,13 @@ export const decisionSchema = z.object({
   collection: z.string().nullable().describe("Collection name for a CREATE, else null"),
   confidence: z.number().min(0).max(1).describe("0-1 confidence this is the right action AND target"),
   rationale: z.string().describe("One or two sentences, in Mort's voice, on why"),
-  // Semantic metadata — the model classifies; the code injects the deterministic
-  // fields (source files, folder origin, tier, dates) around these.
-  zone: z.array(z.string()).describe("Venue zones covered (e.g. Main Stage). Empty if not applicable."),
-  system: z.array(z.string()).describe("Systems covered (Video, Audio, Lighting, Network…). Empty if not applicable."),
-  docType: z.string().nullable().describe("Document type (How-to, Reference, Policy, Troubleshooting…) or null"),
-  entities: z
+  relatedSourceIds: z
     .array(z.string())
-    .describe("Specific gear/rooms named in the content (grandMA3, LED wall, Milli machines). Empty if none."),
+    .describe(
+      "sourceIds from the library list you actually drew on or that the reader would want — copied " +
+        "verbatim. These get linked on the page. Empty if none applied; do not list a file just " +
+        "because it was offered.",
+    ),
   bodyMarkdown: z
     .string()
     .describe(
@@ -50,17 +51,17 @@ export const decisionSchema = z.object({
 });
 export type Decision = z.infer<typeof decisionSchema>;
 
-const INSTRUCTIONS = `You are taking a file into Mort's library and deciding what — if anything —
-the knowledge base should do about it.
+const INSTRUCTIONS = `You have already read this file and said what it is. Now decide what — if
+anything — the knowledge base should do about it.
 
-FIRST, always: write \`summary\` (what this file is) and classify zone/system/docType/entities
-from the CONTENT. This is recorded whatever you decide, so Mort remembers the file and can
-reference it later. Leave fields empty rather than guessing.
+You are shown the pages that already exist and the other files Mort holds. Use them. They are
+not decoration: the right move is usually to strengthen something that exists rather than add
+another page beside it.
 
-THEN judge: is this ARTICLE material or REFERENCE material?
+Judge whether this is ARTICLE material or REFERENCE material:
 
-- ARTICLE material documents how something works or is done — Word procedures, specs,
-  written knowledge someone would READ.
+- ARTICLE material documents how something works or is done — Word procedures, specs, written
+  knowledge someone would READ.
     → CREATE a new page (give title + collection), or UPDATE_ADDITIVE the right existing
       candidate (give targetDocId).
 - REFERENCE material is an artifact you'd link or download, not read as prose — console/show
@@ -79,8 +80,9 @@ Rules:
 - targetDocId MUST be copied verbatim from the candidate list below — the long UUID after
   "targetDocId:". Never a list position, a number, or a title. If no candidate fits, do not
   invent one: use CREATE or HOLD.
-- You are shown the other files Mort already has. Use them: prefer the page that related
-  files already feed, and reference those artifacts rather than duplicating their content.
+- Cite, don't copy. When a library file supports what you're writing, reference it in
+  relatedSourceIds and describe what it is — never restate its contents as if you'd read them
+  into the page.
 - Set confidence honestly. A weak candidate match means low confidence (it goes to review).
 - bodyMarkdown is the cleaned body ONLY — no metadata header, no H1 title (Mort renders those
   himself). Never invent facts.`;
@@ -93,42 +95,58 @@ export type DecideInput = {
   folderPath?: string;
   role: FileRole;
   extractedMarkdown: string;
-  candidates: KbHit[];
-  candidateBody?: string | null;
-  /** Other files Mort already holds that look related — his library, not the KB. */
-  relatedFiles?: RelatedFile[];
+  /** What pass 1 made of this file. */
+  understanding: Understanding;
+  /** What pass 2 pulled up: candidates, their bodies, and related library files. */
+  gathered: Gathered;
 };
 
 const MAX_INPUT = 40_000;
+/** Per-candidate body budget. Three bodies at 6k ≈ 18k chars of context — enough
+ *  to judge near-duplicates without crowding out the file itself. */
+const MAX_BODY = 6_000;
 
 /** The decision plus what it cost — tokens feed the journal and the daily cap. */
 export type DecideResult = { decision: Decision; tokens: number };
 
 export async function decide(input: DecideInput): Promise<DecideResult> {
+  const { understanding: u, gathered } = input;
+
   // Do NOT number this list. An earlier "[0] … [1] …" rendering invited the model
   // to answer with the list index ("1") instead of the doc id, which the
   // invented-target guard then had to reject — so a correct decision died on
   // formatting. Lead each line with the id it must copy.
-  const candidateList = input.candidates
+  const candidateList = gathered.candidates
     .map((c) => `  - targetDocId: ${c.docId}\n      "${c.title}" (score ${c.score.toFixed(2)}) — ${c.breadcrumb}`)
     .join("\n");
 
-  const relatedList = (input.relatedFiles ?? [])
+  const relatedList = gathered.library
     .map((f) => `  [${f.role}] ${f.sourceId} — ${f.summary ?? "(not yet summarised)"}`)
     .join("\n");
+
+  const bodies = gathered.bodies
+    .map((b) => `--- "${b.title}" (${b.docId}) ---\n${b.text.slice(0, MAX_BODY)}`)
+    .join("\n\n");
 
   const prompt = [
     `File: ${input.fileName}`,
     input.folderPath ? `Folder: ${input.folderPath}` : "",
     `Detected role: ${input.role}`,
     "",
+    "What you already determined this file is:",
+    `  Summary: ${u.summary}`,
+    `  Zone: ${u.zone.join(", ") || "—"}`,
+    `  System: ${u.system.join(", ") || "—"}`,
+    `  Entities: ${u.entities.join(", ") || "—"}`,
+    `  Type: ${u.docType ?? "—"}`,
+    "",
     "Existing KB candidates (best first) — targetDocId must be one of these:",
     candidateList || "  (none — the KB has nothing similar)",
     "",
-    "Other files already in Mort's library that look related:",
+    "Other files already in Mort's library that bear on this one:",
     relatedList || "  (none)",
     "",
-    input.candidateBody ? `Current content of the top candidate:\n${input.candidateBody.slice(0, 8000)}` : "",
+    bodies ? `Current content of the closest pages:\n${bodies}` : "",
     "",
     "Extracted file content:",
     input.extractedMarkdown.slice(0, MAX_INPUT),

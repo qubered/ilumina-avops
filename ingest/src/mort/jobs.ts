@@ -22,16 +22,18 @@ export type MortJob = {
   contentHash: string;
   data: Buffer;
   attempts: number;
+  /** Re-check even if the content is unchanged (a related page just appeared). */
+  force: boolean;
 };
 
 /** Enqueue a turn. Idempotent: one live job per (source, content version). */
-export async function enqueueJob(job: Omit<MortJob, "id" | "attempts">): Promise<boolean> {
+export async function enqueueJob(job: Omit<MortJob, "id" | "attempts" | "force"> & { force?: boolean }): Promise<boolean> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_jobs (source_id, file_name, content_type, folder_path, content_hash, data)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO mort_jobs (source_id, file_name, content_type, folder_path, content_hash, data, force)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT DO NOTHING
      RETURNING id`,
-    [job.sourceId, job.fileName, job.contentType, job.folderPath, job.contentHash, job.data],
+    [job.sourceId, job.fileName, job.contentType, job.folderPath, job.contentHash, job.data, job.force ?? false],
   );
   return rows.length > 0;
 }
@@ -50,7 +52,7 @@ export async function claimJob(): Promise<MortJob | null> {
          FOR UPDATE SKIP LOCKED
          LIMIT 1
       )
-      RETURNING id::int AS id, source_id, file_name, content_type, folder_path, content_hash, data, attempts`,
+      RETURNING id::int AS id, source_id, file_name, content_type, folder_path, content_hash, data, attempts, force`,
   );
   if (!rows.length) return null;
   const r = rows[0];
@@ -63,6 +65,7 @@ export async function claimJob(): Promise<MortJob | null> {
     contentHash: r.content_hash,
     data: r.data as Buffer,
     attempts: r.attempts,
+    force: r.force === true,
   };
 }
 
@@ -118,6 +121,40 @@ export async function queueStats(): Promise<QueueStats> {
   const stats: QueueStats = { pending: 0, running: 0, dead: 0 };
   for (const r of rows) stats[r.status as keyof QueueStats] = r.n as number;
   return stats;
+}
+
+export type ActiveJob = {
+  id: number;
+  sourceId: string;
+  fileName: string;
+  status: string;
+  attempts: number;
+  runAfter: string;
+  /** A re-check: same bytes, but a page it might belong on has appeared. */
+  force: boolean;
+  lastError: string | null;
+};
+
+/** What's in flight or waiting — "which files is Mort working through right now". */
+export async function listActiveJobs(limit = 50): Promise<ActiveJob[]> {
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, source_id, file_name, status, attempts, run_after, force, last_error
+       FROM mort_jobs
+      WHERE status IN ('pending', 'running')
+      ORDER BY status DESC, id ASC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 200)],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    sourceId: r.source_id,
+    fileName: r.file_name,
+    status: r.status,
+    attempts: r.attempts,
+    runAfter: r.run_after instanceof Date ? r.run_after.toISOString() : String(r.run_after),
+    force: r.force === true,
+    lastError: r.last_error,
+  }));
 }
 
 export type DeadJob = { id: number; sourceId: string; attempts: number; lastError: string | null };

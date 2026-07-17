@@ -119,6 +119,60 @@ export async function reviveJob(id: number): Promise<{ ok: boolean }> {
   return { ok: res.ok };
 }
 
+export type MortActivityRow = {
+  ts: string;
+  sourceId: string | null;
+  action: string;
+  rationale: string | null;
+  confidence: number | null;
+  tokens: number | null;
+  model: string | null;
+  docTitle: string | null;
+  outlineDocumentId: string | null;
+};
+
+export type MortLibraryRow = {
+  sourceId: string;
+  role: string;
+  status: string;
+  summary: string | null;
+  zone: string[];
+  system: string[];
+  entities: string[];
+  updatedAt: string;
+  docCount: number;
+  hasBytes: boolean;
+};
+
+export type MortActiveJob = {
+  id: number;
+  sourceId: string;
+  fileName: string;
+  status: string;
+  attempts: number;
+  runAfter: string;
+  force: boolean;
+  lastError: string | null;
+};
+
+export type MortActivity = {
+  journal: MortActivityRow[];
+  library: MortLibraryRow[];
+  queue: MortActiveJob[];
+};
+
+/** What Mort has been doing, what's in flight, and everything he holds. Null if unreachable. */
+export async function getMortActivity(query?: string): Promise<MortActivity | null> {
+  try {
+    const url = `${base()}/mort/activity${query ? `?q=${encodeURIComponent(query)}` : ""}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}` }, cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as MortActivity;
+  } catch {
+    return null;
+  }
+}
+
 export type MortFact = {
   id: number;
   factKey: string;

@@ -1,7 +1,9 @@
 import { pool } from "./db.js";
 import type { EventRow } from "./events.js";
 import type {
+  DocEntry,
   FileRole,
+  LibraryEntry,
   MortDoc,
   MortDocState,
   MortSource,
@@ -348,6 +350,191 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
     [limit],
   );
   return rows as ReviewRow[];
+}
+
+/**
+ * Artifacts in the library that bear on a page Mort just wrote, and aren't on it
+ * yet. A page appearing (or growing) changes what its siblings should do: a
+ * schematic that arrived before its page had nowhere to go, and one already
+ * filed on another page may belong on this one too — a file is not spent when
+ * it lands somewhere.
+ *
+ * Scoped to sources with bytes, since only those can be attached; `excludeMortId`
+ * drops the ones already on this doc so a re-check can't loop on its own work.
+ */
+export async function listAttachableRelatives(params: {
+  excludeSourceId: string;
+  /** Doc just written — sources already attached to it are skipped. */
+  excludeMortId?: string | null;
+  folderOrigin?: string | null;
+  system?: string[];
+  entities?: string[];
+  limit?: number;
+}): Promise<Array<{ sourceId: string; folderOrigin: string | null; checksum: string | null }>> {
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.folder_origin, s.checksum
+       FROM mort_sources s
+       JOIN mort_blobs b ON b.source_id = s.source_id
+      WHERE s.status = 'active'
+        AND s.source_id <> $1
+        AND ( ($2::text   IS NOT NULL AND s.folder_origin = $2)
+           OR ($3::text[] IS NOT NULL AND s.system   && $3::text[])
+           OR ($4::text[] IS NOT NULL AND s.entities && $4::text[]) )
+        AND ( $5::text IS NULL OR NOT EXISTS (
+              SELECT 1 FROM mort_source_doc_relations r
+               WHERE r.source_id = s.source_id AND r.mort_id = $5 AND r.relation = 'attached') )
+      ORDER BY s.updated_at DESC
+      LIMIT $6`,
+    [
+      params.excludeSourceId,
+      params.folderOrigin ?? null,
+      params.system?.length ? params.system : null,
+      params.entities?.length ? params.entities : null,
+      params.excludeMortId ?? null,
+      Math.min(Math.max(params.limit ?? 10, 1), 25),
+    ],
+  );
+  return rows.map((r) => ({ sourceId: r.source_id, folderOrigin: r.folder_origin, checksum: r.checksum }));
+}
+
+// --- Admin activity feed ---------------------------------------------------
+
+export type ActivityRow = {
+  ts: string;
+  sourceId: string | null;
+  action: string;
+  rationale: string | null;
+  confidence: number | null;
+  tokens: number | null;
+  model: string | null;
+  /** Title of the page the entry concerns, when it concerns one. */
+  docTitle: string | null;
+  /** Outline id, so the UI can link straight to the page. */
+  outlineDocumentId: string | null;
+};
+
+/**
+ * What Mort has been doing, newest first — the journal, made readable.
+ *
+ * The join is on EITHER id because `mort_journal.mort_id` is not consistently a
+ * mort_id: the turn journals whatever `createDoc`/`targetDocId` gave it, which is
+ * an Outline document id. Rather than migrate historical rows, accept both — the
+ * table is small and the feed is capped.
+ */
+export async function recentActivity(limit = 50): Promise<ActivityRow[]> {
+  const { rows } = await pool.query(
+    `SELECT j.ts, j.source_id, j.action, j.rationale, j.confidence, j.tokens, j.model,
+            d.title AS doc_title, d.outline_document_id
+       FROM mort_journal j
+       LEFT JOIN mort_docs d
+         ON d.mort_id = j.mort_id OR d.outline_document_id = j.mort_id
+      ORDER BY j.ts DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 200)],
+  );
+  return rows.map((r) => ({
+    ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+    sourceId: r.source_id,
+    action: r.action,
+    rationale: r.rationale,
+    confidence: r.confidence,
+    tokens: r.tokens,
+    model: r.model,
+    docTitle: r.doc_title,
+    outlineDocumentId: r.outline_document_id,
+  }));
+}
+
+export type LibraryRow = {
+  sourceId: string;
+  role: string;
+  status: string;
+  summary: string | null;
+  zone: string[];
+  system: string[];
+  entities: string[];
+  updatedAt: string;
+  /** How many pages this file feeds — 0 means Mort is holding it. */
+  docCount: number;
+  /** Whether Mort still has the bytes (so it can be attached to a future page). */
+  hasBytes: boolean;
+};
+
+/** Every file Mort knows about, with what he made of it. Optionally filtered. */
+export async function listLibrary(q?: string, limit = 200): Promise<LibraryRow[]> {
+  const like = q?.trim() ? `%${q.trim()}%` : null;
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.role, s.status, s.summary, s.zone, s.system, s.entities, s.updated_at,
+            (SELECT count(*)::int FROM mort_source_doc_relations r WHERE r.source_id = s.source_id) AS doc_count,
+            EXISTS (SELECT 1 FROM mort_blobs b WHERE b.source_id = s.source_id) AS has_bytes
+       FROM mort_sources s
+      WHERE ($1::text IS NULL OR s.source_id ILIKE $1 OR s.summary ILIKE $1)
+      ORDER BY s.updated_at DESC
+      LIMIT $2`,
+    [like, Math.min(Math.max(limit, 1), 500)],
+  );
+  return rows.map((r) => ({
+    sourceId: r.source_id,
+    role: r.role,
+    status: r.status,
+    summary: r.summary,
+    zone: r.zone ?? [],
+    system: r.system ?? [],
+    entities: r.entities ?? [],
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+    docCount: r.doc_count,
+    hasBytes: r.has_bytes === true,
+  }));
+}
+
+// --- Corpus digests (R7 dream) ---------------------------------------------
+
+/**
+ * The whole library, one line each, for the dream pass. Summaries only — never
+ * bodies: the point is to see the shape of the corpus at once, which is exactly
+ * what a per-file turn cannot do.
+ *
+ * `hasDoc` is what makes "nothing has been written about these" answerable.
+ */
+export async function libraryDigest(limit = 400): Promise<LibraryEntry[]> {
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.role, s.summary, s.zone, s.system, s.entities,
+            EXISTS (SELECT 1 FROM mort_source_doc_relations r WHERE r.source_id = s.source_id) AS has_doc
+       FROM mort_sources s
+      WHERE s.status = 'active' AND s.role <> 'event_log'
+      ORDER BY s.updated_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 1000)],
+  );
+  return rows.map((r) => ({
+    sourceId: r.source_id,
+    role: r.role,
+    summary: r.summary,
+    zone: r.zone ?? [],
+    system: r.system ?? [],
+    entities: r.entities ?? [],
+    hasDoc: r.has_doc === true,
+  }));
+}
+
+/** Every page Mort maintains, for the dream pass. */
+export async function docDigest(limit = 300): Promise<DocEntry[]> {
+  const { rows } = await pool.query(
+    `SELECT d.mort_id, d.outline_document_id, d.title, d.system, d.collection,
+            (SELECT count(*)::int FROM mort_source_doc_relations r WHERE r.mort_id = d.mort_id) AS source_count
+       FROM mort_docs d
+      ORDER BY d.updated_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 1000)],
+  );
+  return rows.map((r) => ({
+    mortId: r.mort_id,
+    outlineDocumentId: r.outline_document_id,
+    title: r.title,
+    system: r.system,
+    collection: r.collection,
+    sourceCount: r.source_count,
+  }));
 }
 
 // --- Current-state facts (R1 slice 3) --------------------------------------

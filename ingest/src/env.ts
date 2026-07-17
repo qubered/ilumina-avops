@@ -44,6 +44,10 @@ const schema = z
     MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
     // Worker poll interval for the durable queue.
     MORT_POLL_MS: z.coerce.number().min(250).default(3000),
+    // How often Mort steps back and looks at the whole corpus (R7). 0 = never.
+    // Daily by default: a dream costs one model call over a digest of the
+    // library, and the corpus doesn't change shape faster than that.
+    MORT_DREAM_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
   })
   .superRefine((env, ctx) => {
     const need = (cond: boolean, path: string, message: string) => {
