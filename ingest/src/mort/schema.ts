@@ -115,9 +115,28 @@ export async function initMortSchema(): Promise<void> {
       UNIQUE (source_id, row_hash)
     );
 
+    -- Current-state facts (R1 slice 3). The ONLY thing that may override a
+    -- documented KB procedure as "what is true now" — and only because a human
+    -- approved it. Event-log rows are observations; these are decisions.
+    CREATE TABLE IF NOT EXISTS mort_facts (
+      id             bigserial PRIMARY KEY,
+      fact_key       text NOT NULL,
+      value          text NOT NULL,
+      scope          text,
+      effective_from date,
+      effective_to   date,
+      source_tier    text,
+      approved_by    text NOT NULL,
+      confidence     text,
+      supersedes     bigint,
+      note           text,
+      created_at     timestamptz NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);
     CREATE INDEX IF NOT EXISTS mort_events_date ON mort_events (occurred_on);
+    CREATE INDEX IF NOT EXISTS mort_facts_key ON mort_facts (fact_key);
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);
   `);

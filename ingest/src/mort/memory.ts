@@ -274,6 +274,89 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   return rows as ReviewRow[];
 }
 
+// --- Current-state facts (R1 slice 3) --------------------------------------
+
+export type MortFact = {
+  id: number;
+  factKey: string;
+  value: string;
+  scope: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  sourceTier: string | null;
+  approvedBy: string;
+  confidence: string | null;
+  note: string | null;
+};
+
+const mapFact = (r: Record<string, unknown>): MortFact => ({
+  id: r.id as number,
+  factKey: r.fact_key as string,
+  value: r.value as string,
+  scope: (r.scope as string) ?? null,
+  effectiveFrom: r.effective_from ? String(r.effective_from).slice(0, 10) : null,
+  effectiveTo: r.effective_to ? String(r.effective_to).slice(0, 10) : null,
+  sourceTier: (r.source_tier as string) ?? null,
+  approvedBy: r.approved_by as string,
+  confidence: (r.confidence as string) ?? null,
+  note: (r.note as string) ?? null,
+});
+
+/** Facts in force today, optionally filtered by free text. */
+export async function listCurrentFacts(q?: string, limit = 25): Promise<MortFact[]> {
+  const like = q?.trim() ? `%${q.trim()}%` : null;
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, fact_key, value, scope, effective_from, effective_to,
+            source_tier, approved_by, confidence, note
+       FROM mort_facts
+      WHERE (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+        AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+        AND ($1::text IS NULL OR fact_key ILIKE $1 OR value ILIKE $1 OR scope ILIKE $1 OR note ILIKE $1)
+      ORDER BY effective_from DESC NULLS LAST, id DESC
+      LIMIT $2`,
+    [like, Math.min(Math.max(limit, 1), 50)],
+  );
+  return rows.map(mapFact);
+}
+
+export async function insertFact(f: {
+  factKey: string;
+  value: string;
+  scope?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  sourceTier?: string | null;
+  approvedBy: string;
+  confidence?: string | null;
+  note?: string | null;
+}): Promise<number> {
+  const { rows } = await pool.query(
+    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::int AS id`,
+    [
+      f.factKey,
+      f.value,
+      f.scope ?? null,
+      f.effectiveFrom ?? null,
+      f.effectiveTo ?? null,
+      f.sourceTier ?? "human",
+      f.approvedBy,
+      f.confidence ?? null,
+      f.note ?? null,
+    ],
+  );
+  return rows[0].id as number;
+}
+
+/** Close a fact off as of today (superseded / no longer true). */
+export async function retireFact(id: number): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE mort_facts SET effective_to = CURRENT_DATE WHERE id = $1 AND (effective_to IS NULL OR effective_to > CURRENT_DATE)`,
+    [id],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 // --- Memory search (read-only, for the chat's mort_memory tool) -------------
 
 export type MemoryJournalRow = {

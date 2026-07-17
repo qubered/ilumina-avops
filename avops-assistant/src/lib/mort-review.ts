@@ -87,6 +87,52 @@ export async function searchMortMemory(query: string, limit = 12): Promise<MortM
   }
 }
 
+export type MortFact = {
+  id: number;
+  factKey: string;
+  value: string;
+  scope: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  sourceTier: string | null;
+  approvedBy: string;
+  confidence: string | null;
+  note: string | null;
+};
+
+/** Human-approved current-state facts in force today. Empty on any failure. */
+export async function listCurrentFacts(query?: string): Promise<MortFact[]> {
+  try {
+    const url = `${base()}/mort/facts${query ? `?q=${encodeURIComponent(query)}` : ""}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}` }, cache: "no-store" });
+    if (!res.ok) return [];
+    return ((await res.json()) as { facts: MortFact[] }).facts ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createFact(
+  fact: Omit<MortFact, "id" | "effectiveTo"> & { effectiveTo?: string | null },
+): Promise<{ ok: boolean; status: number; json: unknown }> {
+  const res = await fetch(`${base()}/mort/facts`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify(fact),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, json };
+}
+
+export async function retireFact(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${base()}/mort/facts/retire`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  return { ok: res.ok };
+}
+
 export async function setMortMode(mode: MortMode): Promise<{ ok: boolean; status: number; json: unknown }> {
   const res = await fetch(`${base()}/mort/config`, {
     method: "POST",

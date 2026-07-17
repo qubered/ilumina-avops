@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { getMortIdentity, searchMortMemory } from "../mort-review";
+import { getMortIdentity, listCurrentFacts, searchMortMemory } from "../mort-review";
 import { embedQuery } from "./embeddings";
 import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
@@ -50,6 +50,12 @@ Answering:
   images render inline and files download for the crew member.
 - Cite every answer: end with a Sources list of the KB page titles and URLs
   you used; mark web links as (web).
+- Authority order for "what is true NOW": an approved current_state fact wins;
+  otherwise the KB is the documented standard and the event log is a dated
+  observation. Only current_state facts may override a documented procedure, and
+  only because a human approved them — cite the fact with its effective date and
+  who approved it. Never invent a fact; if none covers the question, say so and
+  present the KB + log instead.
 - The event_log tool holds dated records of what the crew ACTUALLY DID
   ("raised LED wall to 2.5m on 2026-07-12"). Use it for "what did we do",
   "last time", "when did we…", or the current physical state of gear. Treat KB
@@ -142,7 +148,25 @@ export const mortMemoryTool = tool({
   },
 });
 
-export const agentTools = { kb_search: kbSearchTool, event_log: eventLogTool, mort_memory: mortMemoryTool };
+export const currentStateTool = tool({
+  description:
+    "Look up human-APPROVED current-state facts — deliberate decisions about what is true NOW at the venue (e.g. 'LED wall height = 2.5m, Main Stage, effective 2026-07-12, approved by Jayden'). Check this for 'what is it now / what's the current X' questions. An approved fact outranks both the KB's documented standard and any event-log observation.",
+  inputSchema: z.object({
+    query: z.string().describe("What current-state value to look up (e.g. 'LED wall height')"),
+  }),
+  execute: async ({ query }): Promise<Record<string, unknown>> => {
+    const facts = await listCurrentFacts(query);
+    if (facts.length === 0) return { note: "No approved current-state fact covers that — fall back to the KB standard and the event log." };
+    return { facts };
+  },
+});
+
+export const agentTools = {
+  kb_search: kbSearchTool,
+  event_log: eventLogTool,
+  mort_memory: mortMemoryTool,
+  current_state: currentStateTool,
+};
 
 /**
  * Mort's voice, layered over the answering rules. The persona is fetched from

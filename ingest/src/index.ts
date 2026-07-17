@@ -21,9 +21,12 @@ import {
   enqueueReview,
   getReviewItem,
   getSource,
+  insertFact,
+  listCurrentFacts,
   listPendingReviews,
   renameSource,
   resolveReview,
+  retireFact,
   searchMemory,
   tombstoneSource,
 } from "./mort/memory.js";
@@ -93,6 +96,44 @@ app.get("/mort/memory", async (c) => {
     limit: Number.isFinite(limit) ? limit : 20,
   });
   return c.json(res);
+});
+
+// Current-state facts (R1 slice 3): human-approved "what is true now" records —
+// the only thing allowed to override a documented KB procedure.
+app.use("/mort/facts", requireReviewAuth);
+app.use("/mort/facts/retire", requireReviewAuth);
+
+app.get("/mort/facts", async (c) => {
+  const limit = Number(c.req.query("limit") ?? 25);
+  const facts = await listCurrentFacts(c.req.query("q"), Number.isFinite(limit) ? limit : 25);
+  return c.json({ facts });
+});
+
+const factSchema = z.object({
+  factKey: z.string().min(1),
+  value: z.string().min(1),
+  scope: z.string().optional().nullable(),
+  effectiveFrom: z.string().optional().nullable(),
+  effectiveTo: z.string().optional().nullable(),
+  sourceTier: z.string().optional().nullable(),
+  approvedBy: z.string().min(1),
+  confidence: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+});
+
+app.post("/mort/facts", async (c) => {
+  const parsed = factSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
+  const id = await insertFact(parsed.data);
+  await appendJournal({ action: "fact_approved", rationale: `${parsed.data.factKey} = ${parsed.data.value} (by ${parsed.data.approvedBy})` });
+  return c.json({ id }, 201);
+});
+
+app.post("/mort/facts/retire", async (c) => {
+  const parsed = z.object({ id: z.coerce.number().int() }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
+  const ok = await retireFact(parsed.data.id);
+  return c.json({ id: parsed.data.id, retired: ok }, ok ? 200 : 404);
 });
 
 // Mort runtime config — the admin UI reads/sets the authoring mode without a redeploy.
