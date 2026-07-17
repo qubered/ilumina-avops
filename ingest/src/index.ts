@@ -31,7 +31,7 @@ import {
   searchMemory,
   tombstoneSource,
 } from "./mort/memory.js";
-import { MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
+import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
 import { executeReview } from "./mort/execute.js";
 import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
 import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";
@@ -83,7 +83,14 @@ app.use("/review/decision", requireReviewAuth);
 // shared dir, so it's served over the internal boundary and cached by the caller).
 app.use("/mort/identity", requireReviewAuth);
 app.get("/mort/identity", (c) =>
-  c.json({ persona: MORT_PERSONA, scope: VENUE_SCOPE, sourceOfTruth: SOURCE_OF_TRUTH, safety: SAFETY_RULES }),
+  c.json({
+    persona: MORT_PERSONA,
+    // Chat-only: the authoring agent deliberately does not get this.
+    chatVoice: MORT_CHAT_VOICE,
+    scope: VENUE_SCOPE,
+    sourceOfTruth: SOURCE_OF_TRUTH,
+    safety: SAFETY_RULES,
+  }),
 );
 
 // Read-only view of Mort's own memory (journal + corpus map) for the chat's

@@ -54,7 +54,14 @@ export async function getMortConfig(): Promise<MortConfig> {
   return (await res.json()) as MortConfig;
 }
 
-export type MortIdentity = { persona: string; scope: string; sourceOfTruth: string; safety: string };
+export type MortIdentity = {
+  persona: string;
+  /** How he talks in chat. Absent on an older ingest — the chat just stays neutral. */
+  chatVoice?: string;
+  scope: string;
+  sourceOfTruth: string;
+  safety: string;
+};
 
 /** Mort's canonical identity, owned by the ingest service. Null if unreachable. */
 export async function getMortIdentity(): Promise<MortIdentity | null> {
