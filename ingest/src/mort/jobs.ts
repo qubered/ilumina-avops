@@ -123,6 +123,40 @@ export async function queueStats(): Promise<QueueStats> {
   return stats;
 }
 
+export type ActiveJob = {
+  id: number;
+  sourceId: string;
+  fileName: string;
+  status: string;
+  attempts: number;
+  runAfter: string;
+  /** A re-check: same bytes, but a page it might belong on has appeared. */
+  force: boolean;
+  lastError: string | null;
+};
+
+/** What's in flight or waiting — "which files is Mort working through right now". */
+export async function listActiveJobs(limit = 50): Promise<ActiveJob[]> {
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, source_id, file_name, status, attempts, run_after, force, last_error
+       FROM mort_jobs
+      WHERE status IN ('pending', 'running')
+      ORDER BY status DESC, id ASC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 200)],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    sourceId: r.source_id,
+    fileName: r.file_name,
+    status: r.status,
+    attempts: r.attempts,
+    runAfter: r.run_after instanceof Date ? r.run_after.toISOString() : String(r.run_after),
+    force: r.force === true,
+    lastError: r.last_error,
+  }));
+}
+
 export type DeadJob = { id: number; sourceId: string; attempts: number; lastError: string | null };
 
 export async function listDeadJobs(limit = 20): Promise<DeadJob[]> {

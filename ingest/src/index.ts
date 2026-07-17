@@ -18,6 +18,8 @@ import { initMortSchema } from "./mort/schema.js";
 import {
   appendJournal,
   enqueueReview,
+  listLibrary,
+  recentActivity,
   getReviewItem,
   getSource,
   insertFact,
@@ -32,7 +34,7 @@ import {
 import { MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
 import { executeReview } from "./mort/execute.js";
 import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
-import { enqueueJob, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";
+import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";
 import { getEffectiveMode, getEffectiveThreshold, setMode } from "./mort/config.js";
 
 const bodySchema = z.object({
@@ -159,6 +161,20 @@ app.post("/mort/jobs/revive", async (c) => {
   const ok = await reviveJob(parsed.data.id);
   if (ok) kickWorker();
   return c.json({ id: parsed.data.id, revived: ok }, ok ? 200 : 404);
+});
+
+// What Mort is doing and what he holds — the admin activity view. One endpoint
+// so the page renders in a single round-trip.
+app.use("/mort/activity", requireReviewAuth);
+
+app.get("/mort/activity", async (c) => {
+  const limit = Number(c.req.query("limit") ?? 50);
+  const [journal, library, queue] = await Promise.all([
+    recentActivity(Number.isFinite(limit) ? limit : 50),
+    listLibrary(c.req.query("q")),
+    listActiveJobs(),
+  ]);
+  return c.json({ journal, library, queue });
 });
 
 // Dream on demand (R7) — the interval is the normal path; this is for "look at

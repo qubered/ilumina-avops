@@ -397,6 +397,96 @@ export async function listAttachableRelatives(params: {
   return rows.map((r) => ({ sourceId: r.source_id, folderOrigin: r.folder_origin, checksum: r.checksum }));
 }
 
+// --- Admin activity feed ---------------------------------------------------
+
+export type ActivityRow = {
+  ts: string;
+  sourceId: string | null;
+  action: string;
+  rationale: string | null;
+  confidence: number | null;
+  tokens: number | null;
+  model: string | null;
+  /** Title of the page the entry concerns, when it concerns one. */
+  docTitle: string | null;
+  /** Outline id, so the UI can link straight to the page. */
+  outlineDocumentId: string | null;
+};
+
+/**
+ * What Mort has been doing, newest first — the journal, made readable.
+ *
+ * The join is on EITHER id because `mort_journal.mort_id` is not consistently a
+ * mort_id: the turn journals whatever `createDoc`/`targetDocId` gave it, which is
+ * an Outline document id. Rather than migrate historical rows, accept both — the
+ * table is small and the feed is capped.
+ */
+export async function recentActivity(limit = 50): Promise<ActivityRow[]> {
+  const { rows } = await pool.query(
+    `SELECT j.ts, j.source_id, j.action, j.rationale, j.confidence, j.tokens, j.model,
+            d.title AS doc_title, d.outline_document_id
+       FROM mort_journal j
+       LEFT JOIN mort_docs d
+         ON d.mort_id = j.mort_id OR d.outline_document_id = j.mort_id
+      ORDER BY j.ts DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 200)],
+  );
+  return rows.map((r) => ({
+    ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+    sourceId: r.source_id,
+    action: r.action,
+    rationale: r.rationale,
+    confidence: r.confidence,
+    tokens: r.tokens,
+    model: r.model,
+    docTitle: r.doc_title,
+    outlineDocumentId: r.outline_document_id,
+  }));
+}
+
+export type LibraryRow = {
+  sourceId: string;
+  role: string;
+  status: string;
+  summary: string | null;
+  zone: string[];
+  system: string[];
+  entities: string[];
+  updatedAt: string;
+  /** How many pages this file feeds — 0 means Mort is holding it. */
+  docCount: number;
+  /** Whether Mort still has the bytes (so it can be attached to a future page). */
+  hasBytes: boolean;
+};
+
+/** Every file Mort knows about, with what he made of it. Optionally filtered. */
+export async function listLibrary(q?: string, limit = 200): Promise<LibraryRow[]> {
+  const like = q?.trim() ? `%${q.trim()}%` : null;
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.role, s.status, s.summary, s.zone, s.system, s.entities, s.updated_at,
+            (SELECT count(*)::int FROM mort_source_doc_relations r WHERE r.source_id = s.source_id) AS doc_count,
+            EXISTS (SELECT 1 FROM mort_blobs b WHERE b.source_id = s.source_id) AS has_bytes
+       FROM mort_sources s
+      WHERE ($1::text IS NULL OR s.source_id ILIKE $1 OR s.summary ILIKE $1)
+      ORDER BY s.updated_at DESC
+      LIMIT $2`,
+    [like, Math.min(Math.max(limit, 1), 500)],
+  );
+  return rows.map((r) => ({
+    sourceId: r.source_id,
+    role: r.role,
+    status: r.status,
+    summary: r.summary,
+    zone: r.zone ?? [],
+    system: r.system ?? [],
+    entities: r.entities ?? [],
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+    docCount: r.doc_count,
+    hasBytes: r.has_bytes === true,
+  }));
+}
+
 // --- Corpus digests (R7 dream) ---------------------------------------------
 
 /**
