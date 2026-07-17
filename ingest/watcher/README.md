@@ -21,10 +21,6 @@ Runs anywhere with Python 3.9+ — typically the same Windows box running OneDri
 
 ## Run (Windows)
 
-```bat
-pip install -r requirements.txt
-```
-
 Edit `run-watcher.bat` (folder / URL / key), then:
 
 ```bat
@@ -32,6 +28,8 @@ run-watcher.bat --dry-run    :: prints the plan, sends NOTHING — do this first
 run-watcher.bat              :: watch continuously
 run-watcher.bat --once       :: scan once and exit
 ```
+
+It installs `requirements.txt` itself on each launch (a no-op once satisfied).
 
 > **Set the OneDrive folder to "Always keep on this device."** Online-only
 > (Files On-Demand) placeholders are skipped by design — reading them would
