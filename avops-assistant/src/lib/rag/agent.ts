@@ -189,7 +189,7 @@ export async function buildSystemPrompt(): Promise<string> {
     // register would be worse documentation and would outlive every
     // conversation it was charming in.
     personaCache.chatVoice,
-    `VOICE: let that character colour your greetings, framing and asides — a dry aside is welcome. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
+    `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
   ]
     .filter(Boolean)
