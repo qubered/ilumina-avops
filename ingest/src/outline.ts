@@ -49,7 +49,7 @@ export async function ensureCollection(name: string): Promise<Collection> {
   return createCollection(name);
 }
 
-export type OutlineDoc = { id: string; url: string; title: string };
+export type OutlineDoc = { id: string; url: string; title: string; revision?: number };
 
 export async function createDocument(input: {
   title: string;
@@ -57,8 +57,8 @@ export async function createDocument(input: {
   collectionId: string;
   publish: boolean;
 }): Promise<OutlineDoc> {
-  const d = await rpc<OutlineDoc & { url: string }>("documents.create", input);
-  return { id: d.id, url: `${BASE}${d.url}`, title: d.title };
+  const d = await rpc<{ id: string; url: string; title: string; revision?: number }>("documents.create", input);
+  return { id: d.id, url: `${BASE}${d.url}`, title: d.title, revision: d.revision };
 }
 
 export async function updateDocument(input: {
@@ -67,8 +67,55 @@ export async function updateDocument(input: {
   text: string;
   publish: boolean;
 }): Promise<OutlineDoc> {
-  const d = await rpc<OutlineDoc & { url: string }>("documents.update", input);
-  return { id: d.id, url: `${BASE}${d.url}`, title: d.title };
+  const d = await rpc<{ id: string; url: string; title: string; revision?: number }>("documents.update", input);
+  return { id: d.id, url: `${BASE}${d.url}`, title: d.title, revision: d.revision };
+}
+
+/** Full current state of a doc — text + who last touched it (curated-doc detection). */
+export type OutlineDocInfo = {
+  id: string;
+  title: string;
+  text: string;
+  revision: number | null;
+  updatedById: string | null;
+  collectionId: string | null;
+};
+
+export async function getDocument(id: string): Promise<OutlineDocInfo> {
+  const d = await rpc<{
+    id: string;
+    title: string;
+    text: string;
+    revision?: number;
+    updatedBy?: { id?: string } | null;
+    collectionId?: string | null;
+  }>("documents.info", { id });
+  return {
+    id: d.id,
+    title: d.title,
+    text: d.text ?? "",
+    revision: d.revision ?? null,
+    updatedById: d.updatedBy?.id ?? null,
+    collectionId: d.collectionId ?? null,
+  };
+}
+
+/** Permanently delete a document (used only for review-approved removals + test cleanup). */
+export async function deleteDocument(id: string): Promise<void> {
+  await rpc("documents.delete", { id });
+}
+
+/** Archive a document — reversible removal; preferred over delete for approved tombstones. */
+export async function archiveDocument(id: string): Promise<void> {
+  await rpc("documents.archive", { id });
+}
+
+/** The bot's own Outline user id — so `updatedById !== me` means a human edited it. */
+export async function getSelfUserId(): Promise<string | null> {
+  const d = await rpc<{ id?: string }>("auth.info", {});
+  // auth.info returns { user, team }; some versions nest under .user.
+  const anyD = d as unknown as { id?: string; user?: { id?: string } };
+  return anyD.user?.id ?? anyD.id ?? null;
 }
 
 /**

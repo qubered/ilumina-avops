@@ -136,6 +136,10 @@ services:
       OUTLINE_URL: ${OUTLINE_URL}
       OUTLINE_API_KEY: ${OUTLINE_API_KEY}
       OUTLINE_WEBHOOK_SECRET: ${OUTLINE_WEBHOOK_SECRET}
+      # Shared secret for Mort ingest → /api/internal/* (kb-search) and the
+      # assistant → ingest review API.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      INGEST_INTERNAL_URL: ${INGEST_INTERNAL_URL:-http://ingest:8080}
       APP_URL: ${APP_URL}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
@@ -183,6 +187,13 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
       INGEST_DEFAULT_COLLECTION: ${INGEST_DEFAULT_COLLECTION:-Imported}
       APP_URL: ${APP_URL}
+      # Mort → assistant internal KB search + event indexing (single Qdrant owner).
+      ASSISTANT_KB_URL: ${ASSISTANT_KB_URL:-http://assistant:3000/api/internal/kb-search}
+      ASSISTANT_EVENTS_INDEX_URL: ${ASSISTANT_EVENTS_INDEX_URL:-http://assistant:3000/api/internal/index-events}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      # Mort authoring mode: off (legacy) | shadow (propose only) | live.
+      MORT_MODE: ${MORT_MODE:-off}
+      MORT_CONFIDENCE_THRESHOLD: ${MORT_CONFIDENCE_THRESHOLD:-0.6}
     restart: unless-stopped
 
   # Widget-injection layer only: sub_filter adds the chat bubble script to

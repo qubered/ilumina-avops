@@ -26,6 +26,24 @@ const schema = z
     // Fallback collection name if the AI can't pick a fitting section.
     INGEST_DEFAULT_COLLECTION: z.string().default("Imported"),
     APP_URL: z.string().optional().default(""),
+
+    // Mort → assistant internal KB search (v1.5). Empty ASSISTANT_KB_URL = Mort
+    // runs without KB context (graceful degradation, never a hard failure).
+    ASSISTANT_KB_URL: z.string().optional().default(""),
+    // Assistant endpoint that embeds + indexes event rows into Qdrant (R1).
+    ASSISTANT_EVENTS_INDEX_URL: z.string().optional().default(""),
+    INTERNAL_API_KEY: z.string().optional().default(""),
+
+    // Mort authoring mode. off = legacy one-file-one-article pipeline (unchanged).
+    // shadow = Mort decides but only PROPOSES to the review queue (no live writes).
+    // live = Mort executes confident create/update; everything else → review.
+    MORT_MODE: z.enum(["off", "shadow", "live"]).default("off"),
+    MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
+    // Ops rail: stop spending on model calls once this many tokens are used in a
+    // day. Jobs stay queued and resume tomorrow. 0 = no cap.
+    MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
+    // Worker poll interval for the durable queue.
+    MORT_POLL_MS: z.coerce.number().min(250).default(3000),
   })
   .superRefine((env, ctx) => {
     const need = (cond: boolean, path: string, message: string) => {

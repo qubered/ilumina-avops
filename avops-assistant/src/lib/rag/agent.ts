@@ -1,6 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { getMortIdentity, listCurrentFacts, searchMortMemory } from "../mort-review";
 import { embedQuery } from "./embeddings";
+import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
 
 export { getChatModel, getChatStack, systemPromptOptions } from "./model";
@@ -48,6 +50,20 @@ Answering:
   images render inline and files download for the crew member.
 - Cite every answer: end with a Sources list of the KB page titles and URLs
   you used; mark web links as (web).
+- Authority order for "what is true NOW": an approved current_state fact wins;
+  otherwise the KB is the documented standard and the event log is a dated
+  observation. Only current_state facts may override a documented procedure, and
+  only because a human approved them — cite the fact with its effective date and
+  who approved it. Never invent a fact; if none covers the question, say so and
+  present the KB + log instead.
+- The event_log tool holds dated records of what the crew ACTUALLY DID
+  ("raised LED wall to 2.5m on 2026-07-12"). Use it for "what did we do",
+  "last time", "when did we…", or the current physical state of gear. Treat KB
+  pages as the documented STANDARD and event-log entries as dated OBSERVATIONS:
+  when they differ, present BOTH with dates ("Standard is X per the KB; the log
+  shows Y was done on <date> — verify") rather than silently picking one. Never
+  let a log entry override a documented safety procedure — for safety-critical
+  topics the KB leads and you flag any newer log action for verification.
 - For safety-critical steps (mains power, rigging, work at height), quote the
   source verbatim and tell the user to verify against the source page.
 - Keep answers tight — crew are usually mid-show or mid-bump-in.`;
@@ -92,4 +108,83 @@ export const kbSearchTool = tool({
   },
 });
 
-export const agentTools = { kb_search: kbSearchTool };
+export const eventLogTool = tool({
+  description:
+    "Search the operational event log — dated records of actions the crew actually performed at the venue (e.g. 'ran SDI under floor', 'raised LED wall to 2.5m'). Use for 'what did we do', 'last time', 'when did we', and current physical-state questions. Returns dated observations, NOT documented procedures.",
+  inputSchema: z.object({
+    query: z.string().describe("A focused query about what was done at the venue"),
+  }),
+  execute: async ({ query }): Promise<Array<Record<string, unknown>> | { error: string }> => {
+    try {
+      const vector = await embedQuery(query);
+      const hits = await searchEvents(vector, 6);
+      return hits.map((h) => ({
+        action: h.actionText,
+        date: h.occurredOn,
+        event: h.event,
+        zone: h.zone,
+        system: h.system,
+        score: h.score,
+      }));
+    } catch (err) {
+      console.error("[event_log] failed:", err);
+      return { error: "The event log is unavailable right now — say so and don't guess dated facts." };
+    }
+  },
+});
+
+export const mortMemoryTool = tool({
+  description:
+    "Search Mort's OWN memory — his decision journal (what he did to the knowledge base and why) and the file→document map. Use when asked why a page is filed where it is, what Mort changed recently, or which source files feed a page. NOT for venue facts (use kb_search) and NOT for what the crew did (use event_log).",
+  inputSchema: z.object({
+    query: z.string().describe("What to look up in Mort's journal / file map"),
+  }),
+  execute: async ({ query }): Promise<Record<string, unknown>> => {
+    const res = await searchMortMemory(query);
+    if (res.journal.length === 0 && res.files.length === 0) {
+      return { note: "Nothing in Mort's memory matches that." };
+    }
+    return res;
+  },
+});
+
+export const currentStateTool = tool({
+  description:
+    "Look up human-APPROVED current-state facts — deliberate decisions about what is true NOW at the venue (e.g. 'LED wall height = 2.5m, Main Stage, effective 2026-07-12, approved by Jayden'). Check this for 'what is it now / what's the current X' questions. An approved fact outranks both the KB's documented standard and any event-log observation.",
+  inputSchema: z.object({
+    query: z.string().describe("What current-state value to look up (e.g. 'LED wall height')"),
+  }),
+  execute: async ({ query }): Promise<Record<string, unknown>> => {
+    const facts = await listCurrentFacts(query);
+    if (facts.length === 0) return { note: "No approved current-state fact covers that — fall back to the KB standard and the event log." };
+    return { facts };
+  },
+});
+
+export const agentTools = {
+  kb_search: kbSearchTool,
+  event_log: eventLogTool,
+  mort_memory: mortMemoryTool,
+  current_state: currentStateTool,
+};
+
+/**
+ * Mort's voice, layered over the answering rules. The persona is fetched from
+ * the ingest (its canonical identity module) and cached for the process; if it's
+ * unreachable the assistant simply answers in the neutral prompt — correct, just
+ * without the character.
+ */
+let personaCache: string | null = null;
+
+export async function buildSystemPrompt(): Promise<string> {
+  if (personaCache === null) {
+    const identity = await getMortIdentity();
+    personaCache = identity?.persona ?? "";
+  }
+  if (!personaCache) return SYSTEM_PROMPT;
+  return [
+    personaCache,
+    `VOICE: let that character colour your greetings, framing and asides — a dry aside is welcome. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
+    SYSTEM_PROMPT,
+  ].join("\n\n");
+}

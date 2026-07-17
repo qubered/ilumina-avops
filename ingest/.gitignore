@@ -1,0 +1,5 @@
+
+# MORT watcher local state
+*.mort-manifest.sqlite
+.mort-manifest.sqlite
+__pycache__/

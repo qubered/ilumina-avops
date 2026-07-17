@@ -1,0 +1,45 @@
+import type { ReviewRow } from "./memory.js";
+import type { TurnDeps } from "./turn.js";
+
+/**
+ * Executes an APPROVED review proposal (MORT_PLAN §P2). CREATE/UPDATE_ADDITIVE
+ * carry their full content in the proposal payload, so they execute directly
+ * and non-destructively (region splice). ATTACH and tombstone need the original
+ * file bytes / a deletion flow that isn't wired yet — they're surfaced as errors
+ * so the caller can leave them pending rather than silently no-op.
+ */
+
+export type ExecuteResult = { executed: "created" | "updated" | "attached" | "removed"; docId: string };
+
+export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<ExecuteResult> {
+  const payload = item.payload ?? {};
+  switch (item.action) {
+    case "CREATE": {
+      const docId = await deps.createDoc({
+        title: payload.title ?? item.source_id ?? "Untitled",
+        collection: payload.collection ?? null,
+        regionBody: payload.regionBody ?? "",
+        sourceId: item.source_id ?? "",
+      });
+      return { executed: "created", docId };
+    }
+    case "UPDATE_ADDITIVE": {
+      if (!item.target_doc_id) throw new Error("UPDATE_ADDITIVE proposal has no target doc");
+      await deps.updateRegion(item.target_doc_id, payload.regionBody ?? "");
+      return { executed: "updated", docId: item.target_doc_id };
+    }
+    case "ATTACH": {
+      if (!item.target_doc_id) throw new Error("ATTACH proposal has no target doc");
+      if (!deps.attachFile) throw new Error("attach executor unavailable");
+      await deps.attachFile(item.target_doc_id, item.source_id ?? "");
+      return { executed: "attached", docId: item.target_doc_id };
+    }
+    case "tombstone": {
+      if (!deps.removeSource) throw new Error("removeSource executor unavailable");
+      const res = await deps.removeSource(item.source_id ?? "");
+      return { executed: "removed", docId: res.archivedDocIds[0] ?? "" };
+    }
+    default:
+      throw new Error(`cannot execute action '${item.action}' (no executor)`);
+  }
+}

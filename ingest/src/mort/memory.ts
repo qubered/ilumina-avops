@@ -1,0 +1,523 @@
+import { pool } from "./db.js";
+import type { EventRow } from "./events.js";
+import type {
+  FileRole,
+  MortDoc,
+  MortDocState,
+  MortSource,
+  RelationKind,
+  ReviewItem,
+} from "./types.js";
+
+/**
+ * Repository over Mort's memory tables. Thin, typed wrappers — no business
+ * logic (that lives in the decision core, P2). Everything here is safe to call
+ * from the ingest worker.
+ */
+
+// --- Registry key ----------------------------------------------------------
+
+/**
+ * Deterministic dedup key for a doc — the doc's SEMANTIC identity (R4).
+ *
+ * Deliberately excludes folder origin: the same logical page arriving from two
+ * different folders must resolve to ONE doc, not two near-duplicates. Folder is
+ * still a strong placement hint (it seeds the search query) and is preserved on
+ * the doc + in its header for traceability — it just no longer defines identity.
+ */
+export function registryKey(parts: { system?: string | null; title: string }): string {
+  return [parts.system ?? "", parts.title]
+    .map((s) => s.trim().toLowerCase().replace(/\s+/g, " "))
+    .join("|");
+}
+
+// --- Sources (corpus map) --------------------------------------------------
+
+export async function upsertSource(src: {
+  sourceId: string;
+  checksum?: string | null;
+  role?: FileRole;
+  folderOrigin?: string | null;
+  summary?: string | null;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_sources (source_id, checksum, role, folder_origin, summary, status, updated_at)
+     VALUES ($1, $2, COALESCE($3,'unknown'), $4, $5, 'active', now())
+     ON CONFLICT (source_id) DO UPDATE SET
+       checksum = EXCLUDED.checksum,
+       role = COALESCE(EXCLUDED.role, mort_sources.role),
+       folder_origin = EXCLUDED.folder_origin,
+       summary = COALESCE(EXCLUDED.summary, mort_sources.summary),
+       status = 'active',
+       updated_at = now()`,
+    [src.sourceId, src.checksum ?? null, src.role ?? null, src.folderOrigin ?? null, src.summary ?? null],
+  );
+}
+
+export async function getSource(sourceId: string): Promise<MortSource | null> {
+  const { rows } = await pool.query(
+    `SELECT source_id, checksum, role, folder_origin, status, summary
+       FROM mort_sources WHERE source_id = $1`,
+    [sourceId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    sourceId: r.source_id,
+    checksum: r.checksum,
+    role: r.role as FileRole,
+    folderOrigin: r.folder_origin,
+    status: r.status,
+    summary: r.summary,
+  };
+}
+
+/** Mark a source tombstoned (fail-closed deletion — the file vanished locally). */
+export async function tombstoneSource(sourceId: string): Promise<void> {
+  await pool.query(
+    `UPDATE mort_sources SET status = 'tombstoned', updated_at = now() WHERE source_id = $1`,
+    [sourceId],
+  );
+}
+
+/** Rebind a source to a new path (rename = move, not delete+create). */
+export async function renameSource(oldId: string, newId: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE mort_sources SET source_id = $2, updated_at = now() WHERE source_id = $1`, [oldId, newId]);
+    await client.query(`UPDATE mort_source_doc_relations SET source_id = $2 WHERE source_id = $1`, [oldId, newId]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// --- Docs + relations ------------------------------------------------------
+
+export async function findDocByRegistryKey(key: string): Promise<MortDoc | null> {
+  const { rows } = await pool.query(
+    `SELECT mort_id, outline_document_id, collection, title, folder_origin, system, registry_key
+       FROM mort_docs WHERE registry_key = $1`,
+    [key],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    mortId: r.mort_id,
+    outlineDocumentId: r.outline_document_id,
+    collection: r.collection,
+    title: r.title,
+    folderOrigin: r.folder_origin,
+    system: r.system,
+    registryKey: r.registry_key,
+  };
+}
+
+/**
+ * Insert a doc if its registry key is free; if a concurrent create already
+ * claimed the key, returns the existing doc (so the caller converts to an
+ * additive update instead of duplicating).
+ */
+export async function claimDoc(doc: MortDoc): Promise<{ doc: MortDoc; created: boolean }> {
+  const { rows } = await pool.query(
+    `INSERT INTO mort_docs (mort_id, outline_document_id, collection, title, folder_origin, system, registry_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (registry_key) DO NOTHING
+     RETURNING mort_id`,
+    [doc.mortId, doc.outlineDocumentId, doc.collection, doc.title, doc.folderOrigin, doc.system, doc.registryKey],
+  );
+  if (rows.length) return { doc, created: true };
+  const existing = await findDocByRegistryKey(doc.registryKey);
+  return { doc: existing!, created: false };
+}
+
+export async function findMortIdByOutlineId(outlineDocumentId: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT mort_id FROM mort_docs WHERE outline_document_id = $1 LIMIT 1`, [outlineDocumentId]);
+  return rows.length ? (rows[0].mort_id as string) : null;
+}
+
+export async function addRelation(sourceId: string, mortId: string, relation: RelationKind): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_source_doc_relations (source_id, mort_id, relation)
+     VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+    [sourceId, mortId, relation],
+  );
+}
+
+/** All docs a source touched, with the relation and the Outline id. */
+export async function getSourceRelations(
+  sourceId: string,
+): Promise<Array<{ mortId: string; relation: RelationKind; outlineDocumentId: string }>> {
+  const { rows } = await pool.query(
+    `SELECT r.mort_id, r.relation, d.outline_document_id
+       FROM mort_source_doc_relations r JOIN mort_docs d ON d.mort_id = r.mort_id
+      WHERE r.source_id = $1`,
+    [sourceId],
+  );
+  return rows.map((r) => ({ mortId: r.mort_id, relation: r.relation, outlineDocumentId: r.outline_document_id }));
+}
+
+/** How many distinct sources authored a doc — 1 means the doc has a sole author. */
+export async function countAuthors(mortId: string): Promise<number> {
+  const { rows } = await pool.query(
+    `SELECT count(DISTINCT source_id)::int AS n FROM mort_source_doc_relations WHERE mort_id = $1 AND relation = 'authored'`,
+    [mortId],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+export async function deleteSourceRelations(sourceId: string): Promise<void> {
+  await pool.query(`DELETE FROM mort_source_doc_relations WHERE source_id = $1`, [sourceId]);
+}
+
+// --- Journal ---------------------------------------------------------------
+
+export async function appendJournal(entry: {
+  sourceId?: string | null;
+  mortId?: string | null;
+  action: string;
+  rationale?: string | null;
+  confidence?: number | null;
+  model?: string | null;
+  tokens?: number | null;
+  costUsd?: number | null;
+  conflicts?: unknown;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_journal (source_id, mort_id, action, rationale, confidence, model, tokens, cost_usd, conflicts)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      entry.sourceId ?? null,
+      entry.mortId ?? null,
+      entry.action,
+      entry.rationale ?? null,
+      entry.confidence ?? null,
+      entry.model ?? null,
+      entry.tokens ?? null,
+      entry.costUsd ?? null,
+      entry.conflicts != null ? JSON.stringify(entry.conflicts) : null,
+    ],
+  );
+}
+
+// --- Doc state (curated detection + CAS) -----------------------------------
+
+export async function getDocState(outlineDocumentId: string): Promise<MortDocState | null> {
+  const { rows } = await pool.query(
+    `SELECT outline_document_id, last_mort_revision_id, last_mort_body_hash
+       FROM mort_doc_state WHERE outline_document_id = $1`,
+    [outlineDocumentId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    outlineDocumentId: r.outline_document_id,
+    lastMortRevisionId: r.last_mort_revision_id,
+    lastMortBodyHash: r.last_mort_body_hash,
+  };
+}
+
+export async function recordDocState(state: MortDocState): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_doc_state (outline_document_id, last_mort_revision_id, last_mort_body_hash, last_mort_ts)
+     VALUES ($1,$2,$3, now())
+     ON CONFLICT (outline_document_id) DO UPDATE SET
+       last_mort_revision_id = EXCLUDED.last_mort_revision_id,
+       last_mort_body_hash = EXCLUDED.last_mort_body_hash,
+       last_mort_ts = now()`,
+    [state.outlineDocumentId, state.lastMortRevisionId, state.lastMortBodyHash],
+  );
+}
+
+// --- Review queue ----------------------------------------------------------
+
+/** Enqueue a proposal for human review. Idempotent on dedupeKey. Returns true if newly queued. */
+export async function enqueueReview(item: ReviewItem): Promise<boolean> {
+  const { rows } = await pool.query(
+    `INSERT INTO mort_review_queue (action, source_id, mort_id, target_doc_id, payload, rationale, dedupe_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (dedupe_key) DO NOTHING
+     RETURNING id`,
+    [
+      item.action,
+      item.sourceId ?? null,
+      item.mortId ?? null,
+      item.targetDocId ?? null,
+      item.payload != null ? JSON.stringify(item.payload) : null,
+      item.rationale ?? null,
+      item.dedupeKey,
+    ],
+  );
+  return rows.length > 0;
+}
+
+/** A row from mort_review_queue (snake_case, as stored). */
+export type ReviewRow = {
+  id: number;
+  action: string;
+  source_id: string | null;
+  mort_id: string | null;
+  target_doc_id: string | null;
+  payload: { title?: string; collection?: string | null; regionBody?: string } | null;
+  rationale: string | null;
+  status: string;
+  created_at: string;
+};
+
+export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+       FROM mort_review_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT $1`,
+    [limit],
+  );
+  return rows as ReviewRow[];
+}
+
+// --- Current-state facts (R1 slice 3) --------------------------------------
+
+export type MortFact = {
+  id: number;
+  factKey: string;
+  value: string;
+  scope: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  sourceTier: string | null;
+  approvedBy: string;
+  confidence: string | null;
+  note: string | null;
+};
+
+const mapFact = (r: Record<string, unknown>): MortFact => ({
+  id: r.id as number,
+  factKey: r.fact_key as string,
+  value: r.value as string,
+  scope: (r.scope as string) ?? null,
+  effectiveFrom: r.effective_from ? String(r.effective_from).slice(0, 10) : null,
+  effectiveTo: r.effective_to ? String(r.effective_to).slice(0, 10) : null,
+  sourceTier: (r.source_tier as string) ?? null,
+  approvedBy: r.approved_by as string,
+  confidence: (r.confidence as string) ?? null,
+  note: (r.note as string) ?? null,
+});
+
+/** Facts in force today, optionally filtered by free text. */
+export async function listCurrentFacts(q?: string, limit = 25): Promise<MortFact[]> {
+  const like = q?.trim() ? `%${q.trim()}%` : null;
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, fact_key, value, scope, effective_from, effective_to,
+            source_tier, approved_by, confidence, note
+       FROM mort_facts
+      WHERE (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+        AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+        AND ($1::text IS NULL OR fact_key ILIKE $1 OR value ILIKE $1 OR scope ILIKE $1 OR note ILIKE $1)
+      ORDER BY effective_from DESC NULLS LAST, id DESC
+      LIMIT $2`,
+    [like, Math.min(Math.max(limit, 1), 50)],
+  );
+  return rows.map(mapFact);
+}
+
+export async function insertFact(f: {
+  factKey: string;
+  value: string;
+  scope?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  sourceTier?: string | null;
+  approvedBy: string;
+  confidence?: string | null;
+  note?: string | null;
+}): Promise<number> {
+  const { rows } = await pool.query(
+    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::int AS id`,
+    [
+      f.factKey,
+      f.value,
+      f.scope ?? null,
+      f.effectiveFrom ?? null,
+      f.effectiveTo ?? null,
+      f.sourceTier ?? "human",
+      f.approvedBy,
+      f.confidence ?? null,
+      f.note ?? null,
+    ],
+  );
+  return rows[0].id as number;
+}
+
+/** Close a fact off as of today (superseded / no longer true). */
+export async function retireFact(id: number): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE mort_facts SET effective_to = CURRENT_DATE WHERE id = $1 AND (effective_to IS NULL OR effective_to > CURRENT_DATE)`,
+    [id],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+// --- Memory search (read-only, for the chat's mort_memory tool) -------------
+
+export type MemoryJournalRow = {
+  ts: string;
+  sourceId: string | null;
+  mortId: string | null;
+  action: string;
+  rationale: string | null;
+  confidence: number | null;
+};
+export type MemoryFileRow = { sourceId: string; role: string; folderOrigin: string | null; summary: string | null };
+
+const JOURNAL_COLS = `ts, source_id, mort_id, action, rationale, confidence`;
+const mapJournal = (r: Record<string, unknown>): MemoryJournalRow => ({
+  ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+  sourceId: (r.source_id as string) ?? null,
+  mortId: (r.mort_id as string) ?? null,
+  action: r.action as string,
+  rationale: (r.rationale as string) ?? null,
+  confidence: (r.confidence as number) ?? null,
+});
+const mapFile = (r: Record<string, unknown>): MemoryFileRow => ({
+  sourceId: r.source_id as string,
+  role: r.role as string,
+  folderOrigin: (r.folder_origin as string) ?? null,
+  summary: (r.summary as string) ?? null,
+});
+
+/**
+ * Look up Mort's own history: why he did something, what he changed recently,
+ * and which source files feed a doc. Read-only.
+ */
+export async function searchMemory(params: { q?: string; docId?: string; limit?: number }): Promise<{
+  journal: MemoryJournalRow[];
+  files: MemoryFileRow[];
+}> {
+  const limit = Math.min(Math.max(params.limit ?? 20, 1), 50);
+
+  if (params.docId) {
+    const { rows: jr } = await pool.query(
+      `SELECT ${JOURNAL_COLS} FROM mort_journal
+        WHERE mort_id = $1 OR mort_id IN (SELECT mort_id FROM mort_docs WHERE outline_document_id = $1)
+        ORDER BY ts DESC LIMIT $2`,
+      [params.docId, limit],
+    );
+    const { rows: fr } = await pool.query(
+      `SELECT s.source_id, s.role, s.folder_origin, s.summary
+         FROM mort_source_doc_relations r
+         JOIN mort_sources s ON s.source_id = r.source_id
+         JOIN mort_docs d ON d.mort_id = r.mort_id
+        WHERE d.mort_id = $1 OR d.outline_document_id = $1
+        LIMIT $2`,
+      [params.docId, limit],
+    );
+    return { journal: jr.map(mapJournal), files: fr.map(mapFile) };
+  }
+
+  const q = params.q?.trim();
+  if (q) {
+    const like = `%${q}%`;
+    const { rows: jr } = await pool.query(
+      `SELECT ${JOURNAL_COLS} FROM mort_journal
+        WHERE source_id ILIKE $1 OR rationale ILIKE $1 OR action ILIKE $1 OR mort_id ILIKE $1
+        ORDER BY ts DESC LIMIT $2`,
+      [like, limit],
+    );
+    const { rows: fr } = await pool.query(
+      `SELECT source_id, role, folder_origin, summary FROM mort_sources
+        WHERE source_id ILIKE $1 OR summary ILIKE $1 ORDER BY updated_at DESC LIMIT $2`,
+      [like, limit],
+    );
+    return { journal: jr.map(mapJournal), files: fr.map(mapFile) };
+  }
+
+  // No filter → most recent activity ("what did you change this week?").
+  const { rows } = await pool.query(`SELECT ${JOURNAL_COLS} FROM mort_journal ORDER BY ts DESC LIMIT $1`, [limit]);
+  return { journal: rows.map(mapJournal), files: [] };
+}
+
+// --- Events (episodic memory) ----------------------------------------------
+
+export async function getEventHashes(sourceId: string): Promise<string[]> {
+  const { rows } = await pool.query(`SELECT row_hash FROM mort_events WHERE source_id = $1`, [sourceId]);
+  return rows.map((r) => r.row_hash as string);
+}
+
+export async function insertEvent(sourceId: string, row: EventRow): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_events (source_id, row_hash, event, occurred_on, zone, system, entities, action_text)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (source_id, row_hash) DO NOTHING`,
+    [sourceId, row.rowHash, row.event, row.occurredOn, row.zone, row.system, row.entities, row.actionText],
+  );
+}
+
+export async function deleteEventsByHash(sourceId: string, hashes: string[]): Promise<void> {
+  if (!hashes.length) return;
+  await pool.query(`DELETE FROM mort_events WHERE source_id = $1 AND row_hash = ANY($2)`, [sourceId, hashes]);
+}
+
+// --- Blobs (pending-attachment bytes) --------------------------------------
+
+export type MortBlob = { fileName: string; contentType: string; data: Buffer };
+
+export async function saveBlob(sourceId: string, blob: MortBlob): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_blobs (source_id, file_name, content_type, data)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (source_id) DO UPDATE SET
+       file_name = EXCLUDED.file_name, content_type = EXCLUDED.content_type,
+       data = EXCLUDED.data, created_at = now()`,
+    [sourceId, blob.fileName, blob.contentType, blob.data],
+  );
+}
+
+export async function getBlob(sourceId: string): Promise<MortBlob | null> {
+  const { rows } = await pool.query(
+    `SELECT file_name, content_type, data FROM mort_blobs WHERE source_id = $1`,
+    [sourceId],
+  );
+  if (!rows.length) return null;
+  return { fileName: rows[0].file_name, contentType: rows[0].content_type, data: rows[0].data as Buffer };
+}
+
+export async function deleteBlob(sourceId: string): Promise<void> {
+  await pool.query(`DELETE FROM mort_blobs WHERE source_id = $1`, [sourceId]);
+}
+
+// --- Runtime settings ------------------------------------------------------
+
+export async function getSetting(key: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT value FROM mort_settings WHERE key = $1`, [key]);
+  return rows.length ? (rows[0].value as string) : null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO mort_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [key, value],
+  );
+}
+
+export async function getReviewItem(id: number): Promise<ReviewRow | null> {
+  const { rows } = await pool.query(
+    `SELECT id::int AS id, action, source_id, mort_id, target_doc_id, payload, rationale, status, created_at
+       FROM mort_review_queue WHERE id = $1`,
+    [id],
+  );
+  return rows.length ? (rows[0] as ReviewRow) : null;
+}
+
+/** Mark a proposal decided. Only transitions a pending item; returns false if it wasn't pending. */
+export async function resolveReview(id: number, status: "approved" | "rejected", decidedBy?: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE mort_review_queue SET status = $2, decided_at = now(), decided_by = $3
+       WHERE id = $1 AND status = 'pending'`,
+    [id, status, decidedBy ?? null],
+  );
+  return (rowCount ?? 0) > 0;
+}
