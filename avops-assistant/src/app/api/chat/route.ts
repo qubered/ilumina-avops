@@ -6,9 +6,9 @@ import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type Source } from "@/lib/db";
 import {
   agentTools,
+  buildSystemPrompt,
   getChatStack,
   MAX_STEPS,
-  SYSTEM_PROMPT,
   systemPromptOptions,
   type KbSearchResult,
 } from "@/lib/rag/agent";
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(SYSTEM_PROMPT),
+      ...systemPromptOptions(await buildSystemPrompt()),
       messages: modelMessages,
       tools: { ...agentTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),

@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { getMortIdentity, searchMortMemory } from "../mort-review";
 import { embedQuery } from "./embeddings";
 import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
@@ -126,4 +127,40 @@ export const eventLogTool = tool({
   },
 });
 
-export const agentTools = { kb_search: kbSearchTool, event_log: eventLogTool };
+export const mortMemoryTool = tool({
+  description:
+    "Search Mort's OWN memory — his decision journal (what he did to the knowledge base and why) and the file→document map. Use when asked why a page is filed where it is, what Mort changed recently, or which source files feed a page. NOT for venue facts (use kb_search) and NOT for what the crew did (use event_log).",
+  inputSchema: z.object({
+    query: z.string().describe("What to look up in Mort's journal / file map"),
+  }),
+  execute: async ({ query }): Promise<Record<string, unknown>> => {
+    const res = await searchMortMemory(query);
+    if (res.journal.length === 0 && res.files.length === 0) {
+      return { note: "Nothing in Mort's memory matches that." };
+    }
+    return res;
+  },
+});
+
+export const agentTools = { kb_search: kbSearchTool, event_log: eventLogTool, mort_memory: mortMemoryTool };
+
+/**
+ * Mort's voice, layered over the answering rules. The persona is fetched from
+ * the ingest (its canonical identity module) and cached for the process; if it's
+ * unreachable the assistant simply answers in the neutral prompt — correct, just
+ * without the character.
+ */
+let personaCache: string | null = null;
+
+export async function buildSystemPrompt(): Promise<string> {
+  if (personaCache === null) {
+    const identity = await getMortIdentity();
+    personaCache = identity?.persona ?? "";
+  }
+  if (!personaCache) return SYSTEM_PROMPT;
+  return [
+    personaCache,
+    `VOICE: let that character colour your greetings, framing and asides — a dry aside is welcome. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
+    SYSTEM_PROMPT,
+  ].join("\n\n");
+}

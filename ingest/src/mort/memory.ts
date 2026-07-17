@@ -274,6 +274,85 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   return rows as ReviewRow[];
 }
 
+// --- Memory search (read-only, for the chat's mort_memory tool) -------------
+
+export type MemoryJournalRow = {
+  ts: string;
+  sourceId: string | null;
+  mortId: string | null;
+  action: string;
+  rationale: string | null;
+  confidence: number | null;
+};
+export type MemoryFileRow = { sourceId: string; role: string; folderOrigin: string | null; summary: string | null };
+
+const JOURNAL_COLS = `ts, source_id, mort_id, action, rationale, confidence`;
+const mapJournal = (r: Record<string, unknown>): MemoryJournalRow => ({
+  ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+  sourceId: (r.source_id as string) ?? null,
+  mortId: (r.mort_id as string) ?? null,
+  action: r.action as string,
+  rationale: (r.rationale as string) ?? null,
+  confidence: (r.confidence as number) ?? null,
+});
+const mapFile = (r: Record<string, unknown>): MemoryFileRow => ({
+  sourceId: r.source_id as string,
+  role: r.role as string,
+  folderOrigin: (r.folder_origin as string) ?? null,
+  summary: (r.summary as string) ?? null,
+});
+
+/**
+ * Look up Mort's own history: why he did something, what he changed recently,
+ * and which source files feed a doc. Read-only.
+ */
+export async function searchMemory(params: { q?: string; docId?: string; limit?: number }): Promise<{
+  journal: MemoryJournalRow[];
+  files: MemoryFileRow[];
+}> {
+  const limit = Math.min(Math.max(params.limit ?? 20, 1), 50);
+
+  if (params.docId) {
+    const { rows: jr } = await pool.query(
+      `SELECT ${JOURNAL_COLS} FROM mort_journal
+        WHERE mort_id = $1 OR mort_id IN (SELECT mort_id FROM mort_docs WHERE outline_document_id = $1)
+        ORDER BY ts DESC LIMIT $2`,
+      [params.docId, limit],
+    );
+    const { rows: fr } = await pool.query(
+      `SELECT s.source_id, s.role, s.folder_origin, s.summary
+         FROM mort_source_doc_relations r
+         JOIN mort_sources s ON s.source_id = r.source_id
+         JOIN mort_docs d ON d.mort_id = r.mort_id
+        WHERE d.mort_id = $1 OR d.outline_document_id = $1
+        LIMIT $2`,
+      [params.docId, limit],
+    );
+    return { journal: jr.map(mapJournal), files: fr.map(mapFile) };
+  }
+
+  const q = params.q?.trim();
+  if (q) {
+    const like = `%${q}%`;
+    const { rows: jr } = await pool.query(
+      `SELECT ${JOURNAL_COLS} FROM mort_journal
+        WHERE source_id ILIKE $1 OR rationale ILIKE $1 OR action ILIKE $1 OR mort_id ILIKE $1
+        ORDER BY ts DESC LIMIT $2`,
+      [like, limit],
+    );
+    const { rows: fr } = await pool.query(
+      `SELECT source_id, role, folder_origin, summary FROM mort_sources
+        WHERE source_id ILIKE $1 OR summary ILIKE $1 ORDER BY updated_at DESC LIMIT $2`,
+      [like, limit],
+    );
+    return { journal: jr.map(mapJournal), files: fr.map(mapFile) };
+  }
+
+  // No filter → most recent activity ("what did you change this week?").
+  const { rows } = await pool.query(`SELECT ${JOURNAL_COLS} FROM mort_journal ORDER BY ts DESC LIMIT $1`, [limit]);
+  return { journal: rows.map(mapJournal), files: [] };
+}
+
 // --- Events (episodic memory) ----------------------------------------------
 
 export async function getEventHashes(sourceId: string): Promise<string[]> {

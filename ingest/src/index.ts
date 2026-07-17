@@ -24,8 +24,10 @@ import {
   listPendingReviews,
   renameSource,
   resolveReview,
+  searchMemory,
   tombstoneSource,
 } from "./mort/memory.js";
+import { MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
 import { executeReview } from "./mort/execute.js";
 import { enqueueTurn, getDeps, initWorker } from "./mort/worker.js";
 import { getEffectiveMode, getEffectiveThreshold, setMode } from "./mort/config.js";
@@ -70,6 +72,28 @@ const requireReviewAuth: MiddlewareHandler = async (c, next) => {
 };
 app.use("/review", requireReviewAuth);
 app.use("/review/decision", requireReviewAuth);
+
+// Mort's canonical identity — the assistant's chat persona reads this so both
+// faces share one definition (no monorepo: the Docker build contexts can't see a
+// shared dir, so it's served over the internal boundary and cached by the caller).
+app.use("/mort/identity", requireReviewAuth);
+app.get("/mort/identity", (c) =>
+  c.json({ persona: MORT_PERSONA, scope: VENUE_SCOPE, sourceOfTruth: SOURCE_OF_TRUTH, safety: SAFETY_RULES }),
+);
+
+// Read-only view of Mort's own memory (journal + corpus map) for the chat's
+// mort_memory tool: "why is this filed here", "what did you change", "which
+// files feed this page".
+app.use("/mort/memory", requireReviewAuth);
+app.get("/mort/memory", async (c) => {
+  const limit = Number(c.req.query("limit") ?? 20);
+  const res = await searchMemory({
+    q: c.req.query("q"),
+    docId: c.req.query("docId"),
+    limit: Number.isFinite(limit) ? limit : 20,
+  });
+  return c.json(res);
+});
 
 // Mort runtime config — the admin UI reads/sets the authoring mode without a redeploy.
 app.use("/mort/config", requireReviewAuth);
