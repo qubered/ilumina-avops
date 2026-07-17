@@ -39,19 +39,66 @@ export async function upsertSource(src: {
   role?: FileRole;
   folderOrigin?: string | null;
   summary?: string | null;
+  zone?: string[];
+  system?: string[];
+  entities?: string[];
 }): Promise<void> {
   await pool.query(
-    `INSERT INTO mort_sources (source_id, checksum, role, folder_origin, summary, status, updated_at)
-     VALUES ($1, $2, COALESCE($3,'unknown'), $4, $5, 'active', now())
+    `INSERT INTO mort_sources (source_id, checksum, role, folder_origin, summary, zone, system, entities, status, updated_at)
+     VALUES ($1, $2, COALESCE($3,'unknown'), $4, $5, COALESCE($6,'{}'), COALESCE($7,'{}'), COALESCE($8,'{}'), 'active', now())
      ON CONFLICT (source_id) DO UPDATE SET
        checksum = EXCLUDED.checksum,
        role = COALESCE(EXCLUDED.role, mort_sources.role),
        folder_origin = EXCLUDED.folder_origin,
        summary = COALESCE(EXCLUDED.summary, mort_sources.summary),
+       zone = COALESCE(EXCLUDED.zone, mort_sources.zone),
+       system = COALESCE(EXCLUDED.system, mort_sources.system),
+       entities = COALESCE(EXCLUDED.entities, mort_sources.entities),
        status = 'active',
        updated_at = now()`,
-    [src.sourceId, src.checksum ?? null, src.role ?? null, src.folderOrigin ?? null, src.summary ?? null],
+    [
+      src.sourceId,
+      src.checksum ?? null,
+      src.role ?? null,
+      src.folderOrigin ?? null,
+      src.summary ?? null,
+      src.zone?.length ? src.zone : null,
+      src.system?.length ? src.system : null,
+      src.entities?.length ? src.entities : null,
+    ],
   );
+}
+
+/**
+ * Other files in the library that look related to this one — same folder, or
+ * overlapping system/entities. This is what lets Mort "look at the other files
+ * he has" when deciding, rather than only searching the published KB.
+ */
+export async function listRelatedSources(params: {
+  excludeSourceId: string;
+  folderOrigin?: string | null;
+  system?: string[];
+  entities?: string[];
+  limit?: number;
+}): Promise<Array<{ sourceId: string; role: string; summary: string | null }>> {
+  const { rows } = await pool.query(
+    `SELECT source_id, role, summary FROM mort_sources
+      WHERE status = 'active'
+        AND source_id <> $1
+        AND ( ($2::text   IS NOT NULL AND folder_origin = $2)
+           OR ($3::text[] IS NOT NULL AND system   && $3::text[])
+           OR ($4::text[] IS NOT NULL AND entities && $4::text[]) )
+      ORDER BY updated_at DESC
+      LIMIT $5`,
+    [
+      params.excludeSourceId,
+      params.folderOrigin ?? null,
+      params.system?.length ? params.system : null,
+      params.entities?.length ? params.entities : null,
+      Math.min(Math.max(params.limit ?? 12, 1), 30),
+    ],
+  );
+  return rows.map((r) => ({ sourceId: r.source_id, role: r.role, summary: r.summary }));
 }
 
 export async function getSource(sourceId: string): Promise<MortSource | null> {

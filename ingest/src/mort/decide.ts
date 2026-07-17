@@ -12,7 +12,14 @@ import type { FileRole } from "./types.js";
  */
 
 export const decisionSchema = z.object({
-  action: z.enum(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "REVIEW", "SKIP"]),
+  action: z.enum(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "HOLD", "REVIEW", "SKIP"]),
+  summary: z
+    .string()
+    .describe(
+      "One line: what this file IS (e.g. 'grandMA3 show file for Main Stage, v4', " +
+        "'Word procedure for E2 camera patching'). ALWAYS fill this in — it goes in Mort's " +
+        "library so he can find and reference this file later, even if it never becomes an article.",
+    ),
   targetDocId: z
     .string()
     .nullable()
@@ -38,20 +45,42 @@ export const decisionSchema = z.object({
 });
 export type Decision = z.infer<typeof decisionSchema>;
 
-const INSTRUCTIONS = `You decide how ONE incoming file should change the knowledge base. Choose:
-- CREATE: no existing doc covers this — make a new one (give title + collection).
-- UPDATE_ADDITIVE: a candidate doc is the right home — add/refresh Mort's region there (give targetDocId).
-- ATTACH: a reference/show file that belongs on an existing doc as a downloadable artifact (give targetDocId).
-- REVIEW: you want to merge, restructure, overwrite, or you are unsure which candidate is right — propose for a human.
-- SKIP: nothing to do (duplicate, empty, irrelevant).
+const INSTRUCTIONS = `You are taking a file into Mort's library and deciding what — if anything —
+the knowledge base should do about it.
+
+FIRST, always: write \`summary\` (what this file is) and classify zone/system/docType/entities
+from the CONTENT. This is recorded whatever you decide, so Mort remembers the file and can
+reference it later. Leave fields empty rather than guessing.
+
+THEN judge: is this ARTICLE material or REFERENCE material?
+
+- ARTICLE material documents how something works or is done — Word procedures, specs,
+  written knowledge someone would READ.
+    → CREATE a new page (give title + collection), or UPDATE_ADDITIVE the right existing
+      candidate (give targetDocId).
+- REFERENCE material is an artifact you'd link or download, not read as prose — console/show
+  files, config exports, schematics, photos, drawings. It NEVER becomes its own page.
+    → ATTACH it to the page it belongs with (give targetDocId).
+    → If no page for it exists yet, HOLD it. It stays in the library and gets attached when
+      that page appears. Holding is cheap and reversible; a junk page is not.
+- HOLD is also the right call when you simply aren't sure it deserves a page.
+- REVIEW: you'd need to merge, restructure or overwrite, or two candidates are plausible
+  and picking wrong matters — let a human decide.
+- SKIP: genuinely nothing (empty, duplicate, irrelevant).
 
 Rules:
-- One file does NOT mean one page. Prefer updating/attaching to the right existing doc over creating near-duplicates.
-- 'reference'/'media' roles are usually ATTACH, not CREATE. 'truth'/'structured' usually CREATE or UPDATE_ADDITIVE.
-- Set confidence honestly. If the best candidate is a weak match, lower confidence (it will be sent to review).
-- Classify zone/system/docType/entities from the CONTENT. Leave them empty rather than guessing.
-- bodyMarkdown is the cleaned body ONLY — no metadata header, no H1 title (Mort renders those himself
-  from your classification plus facts he already knows). Never invent facts.`;
+- ONE FILE DOES NOT MEAN ONE PAGE. Most files are not article material. Prefer attaching or
+  holding over creating a page that only restates an artifact.
+- targetDocId MUST be one of the candidate doc ids listed below. Never invent one — if none
+  fit, use CREATE or HOLD.
+- You are shown the other files Mort already has. Use them: prefer the page that related
+  files already feed, and reference those artifacts rather than duplicating their content.
+- Set confidence honestly. A weak candidate match means low confidence (it goes to review).
+- bodyMarkdown is the cleaned body ONLY — no metadata header, no H1 title (Mort renders those
+  himself). Never invent facts.`;
+
+/** A file already in Mort's library, offered as context for this decision. */
+export type RelatedFile = { sourceId: string; role: string; summary: string | null };
 
 export type DecideInput = {
   fileName: string;
@@ -60,6 +89,8 @@ export type DecideInput = {
   extractedMarkdown: string;
   candidates: KbHit[];
   candidateBody?: string | null;
+  /** Other files Mort already holds that look related — his library, not the KB. */
+  relatedFiles?: RelatedFile[];
 };
 
 const MAX_INPUT = 40_000;
@@ -72,13 +103,20 @@ export async function decide(input: DecideInput): Promise<DecideResult> {
     .map((c, i) => `  [${i}] docId=${c.docId} · ${c.title} (score ${c.score.toFixed(2)}) — ${c.breadcrumb}`)
     .join("\n");
 
+  const relatedList = (input.relatedFiles ?? [])
+    .map((f) => `  [${f.role}] ${f.sourceId} — ${f.summary ?? "(not yet summarised)"}`)
+    .join("\n");
+
   const prompt = [
     `File: ${input.fileName}`,
     input.folderPath ? `Folder: ${input.folderPath}` : "",
     `Detected role: ${input.role}`,
     "",
-    "Existing KB candidates (best first):",
+    "Existing KB candidates (best first) — targetDocId must be one of these:",
     candidateList || "  (none — the KB has nothing similar)",
+    "",
+    "Other files already in Mort's library that look related:",
+    relatedList || "  (none)",
     "",
     input.candidateBody ? `Current content of the top candidate:\n${input.candidateBody.slice(0, 8000)}` : "",
     "",

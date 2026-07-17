@@ -156,16 +156,26 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
     d,
   );
 
-  // Keep the blob only if it's still needed for a pending ATTACH proposal.
-  if (mightAttach && !(outcome.decided === "ATTACH" && outcome.executed === "review")) {
-    await deleteBlob(job.sourceId);
-  }
+  // Keep the bytes while a file is still waiting for a home: a pending ATTACH
+  // proposal, or a HOLD (reference material filed in the library until a page
+  // for it appears). Otherwise they're no longer needed.
+  const awaitingHome =
+    (outcome.decided === "ATTACH" && outcome.executed === "review") || outcome.executed === "held";
+  if (mightAttach && !awaitingHome) await deleteBlob(job.sourceId);
 
+  // Record what Mort understood — on every path, including SKIP/HOLD. The library
+  // is how he stays aware of files he didn't turn into articles.
   await upsertSource({
     sourceId: job.sourceId,
     checksum: job.contentHash,
     role: outcome.role,
     folderOrigin: job.folderPath,
+    summary: outcome.understanding.summary,
+    zone: outcome.understanding.zone,
+    system: outcome.understanding.system,
+    entities: outcome.understanding.entities,
   });
-  console.log(`[mort] ${job.sourceId}: ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""}`);
+  console.log(
+    `[mort] ${job.sourceId}: ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""} — ${outcome.understanding.summary}`,
+  );
 }

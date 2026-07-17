@@ -22,6 +22,7 @@ import {
   findMortIdByOutlineId,
   getBlob,
   getSourceRelations,
+  listRelatedSources,
   recordDocState,
   registryKey,
 } from "./memory.js";
@@ -102,6 +103,14 @@ async function createOrUpdateDoc(
 export function buildTurnDeps(selfUserId: string | null): TurnDeps {
   return {
     kbSearch,
+    // Mort's own library — the other files he holds that look related. This is
+    // what lets him reference/attach existing artifacts instead of judging each
+    // file in isolation against the published KB alone.
+    listRelatedFiles: (file) =>
+      listRelatedSources({
+        excludeSourceId: file.sourceId,
+        folderOrigin: file.folderPath ?? null,
+      }),
     getDocumentText: async (docId) => (await getDocument(docId)).text,
     decide,
     updateRegion: async (docId, regionBody) => {
