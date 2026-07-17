@@ -19,16 +19,24 @@ Runs anywhere with Python 3.9+ — typically the same Windows box running OneDri
   (it reorganises SharePoint and drops edits into `_processed` where they're
   never re-sent). Kept only for reference; do not deploy against a synced folder.
 
-## Run (mort_watcher.py)
+## Run (Windows)
 
 ```bat
 pip install -r requirements.txt
-
-set INGEST_URL=https://ingest.qubered.com/ingest
-set INGEST_API_KEY=<your INGEST_API_KEY>
-set WATCH_FOLDER=C:\Users\<you>\OneDrive - <org>\Documentation
-python mort_watcher.py
 ```
+
+Edit `run-watcher.bat` (folder / URL / key), then:
+
+```bat
+run-watcher.bat --dry-run    :: prints the plan, sends NOTHING — do this first
+run-watcher.bat              :: watch continuously
+run-watcher.bat --once       :: scan once and exit
+```
+
+> **Set the OneDrive folder to "Always keep on this device."** Online-only
+> (Files On-Demand) placeholders are skipped by design — reading them would
+> force-download or return partial bytes — so an un-hydrated folder ingests
+> nothing. If a dry-run reports lots of `ph` skips, that's why.
 
 It scans every few seconds; a file is sent once untouched for a few seconds (so
 partial downloads aren't sent early). State lives in a SQLite manifest — the
@@ -62,5 +70,5 @@ quarantine patterns — no network or live folder needed.
 ## Run as a background service on Windows
 
 **Task Scheduler** → new task → trigger "At log on" → action
-`python C:\path\mort_watcher.py`. Set the INGEST_* / WATCH_FOLDER as system
-environment variables, or pass flags.
+`C:\path\ingest\watcher\run-watcher.bat`. For a periodic sweep instead of a
+resident process, use a repeating trigger with the argument `--once`.
