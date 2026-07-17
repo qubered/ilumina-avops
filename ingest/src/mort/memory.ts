@@ -44,8 +44,11 @@ export async function upsertSource(src: {
   entities?: string[];
 }): Promise<void> {
   await pool.query(
+    // The ::text[] casts matter: COALESCE($6,'{}') types the bare '{}' as text,
+    // so the whole expression comes out text and clashes with the text[] column.
     `INSERT INTO mort_sources (source_id, checksum, role, folder_origin, summary, zone, system, entities, status, updated_at)
-     VALUES ($1, $2, COALESCE($3,'unknown'), $4, $5, COALESCE($6,'{}'), COALESCE($7,'{}'), COALESCE($8,'{}'), 'active', now())
+     VALUES ($1, $2, COALESCE($3,'unknown'), $4, $5,
+             COALESCE($6::text[],'{}'), COALESCE($7::text[],'{}'), COALESCE($8::text[],'{}'), 'active', now())
      ON CONFLICT (source_id) DO UPDATE SET
        checksum = EXCLUDED.checksum,
        role = COALESCE(EXCLUDED.role, mort_sources.role),

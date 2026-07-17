@@ -18,7 +18,17 @@ async function rpc<T>(path: string, body: Record<string, unknown>): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Outline ${path} failed (${res.status}): ${text.slice(0, 300)}`);
+    // Name the doc — "documents.update failed (403)" alone is undebuggable.
+    const ref = (body.id ?? body.documentId) as string | undefined;
+    // Outline answers 403 for "you may not" AND for "it isn't there" (it won't
+    // confirm a doc exists to someone who can't see it), so say both.
+    const hint =
+      res.status === 403
+        ? " — the Mort bot user either lacks write access to that document's collection, or the document no longer exists (Outline returns 403, not 404, for both)"
+        : "";
+    throw new Error(
+      `Outline ${path} failed (${res.status})${ref ? ` for doc ${ref}` : ""}${hint}: ${text.slice(0, 300)}`,
+    );
   }
   const json = (await res.json()) as { data?: T };
   return json.data as T;
