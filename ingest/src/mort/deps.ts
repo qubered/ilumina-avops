@@ -52,7 +52,9 @@ async function createOrUpdateDoc(
   const folderOrigin = folderOf(args.sourceId);
   const system = metaField(args.regionBody, "System");
   const collName = args.collection ?? env.INGEST_DEFAULT_COLLECTION;
-  const regKey = registryKey({ folderOrigin, system, title: args.title });
+  // Identity is semantic (system + title) — a file moving folders must not spawn
+  // a duplicate. folderOrigin is still recorded on the doc for traceability.
+  const regKey = registryKey({ system, title: args.title });
   const mortId = `${slugify(args.title)}-${sha(regKey).slice(0, 6)}`;
 
   // Fast path: the logical doc already exists → additive update, never a dup.

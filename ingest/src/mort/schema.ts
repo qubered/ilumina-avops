@@ -140,4 +140,35 @@ export async function initMortSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);
   `);
+
+  await backfillSemanticRegistryKeys();
+}
+
+/**
+ * R4 migration: registry identity became SEMANTIC (system|title). Legacy keys
+ * embedded folder_origin, so once identity dropped the folder a doc whose file
+ * moved would no longer match and Mort would create a duplicate. Recompute the
+ * legacy keys into the new form.
+ *
+ * Idempotent (already-correct rows are skipped). If two docs collapse onto one
+ * key the UNIQUE constraint rejects the update — logged, not fatal: that's a
+ * genuine duplicate pair for a human to merge, and the old keys keep working
+ * until they do.
+ */
+async function backfillSemanticRegistryKeys(): Promise<void> {
+  const NEW_KEY = `lower(regexp_replace(btrim(coalesce(system, '')), '\\s+', ' ', 'g')) || '|' ||
+                   lower(regexp_replace(btrim(title), '\\s+', ' ', 'g'))`;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE mort_docs d SET registry_key = k.new_key
+         FROM (SELECT mort_id, ${NEW_KEY} AS new_key FROM mort_docs) k
+        WHERE d.mort_id = k.mort_id AND d.registry_key IS DISTINCT FROM k.new_key`,
+    );
+    if (rowCount) console.log(`[mort] migrated ${rowCount} registry key(s) to semantic identity`);
+  } catch (err) {
+    console.warn(
+      "[mort] registry-key backfill skipped — two docs likely share one semantic key now; merge the duplicates manually:",
+      err,
+    );
+  }
 }

@@ -17,13 +17,16 @@ import type {
 
 // --- Registry key ----------------------------------------------------------
 
-/** Deterministic dedup key for a doc: lower-cased, whitespace-collapsed. */
-export function registryKey(parts: {
-  folderOrigin?: string | null;
-  system?: string | null;
-  title: string;
-}): string {
-  return [parts.folderOrigin ?? "", parts.system ?? "", parts.title]
+/**
+ * Deterministic dedup key for a doc — the doc's SEMANTIC identity (R4).
+ *
+ * Deliberately excludes folder origin: the same logical page arriving from two
+ * different folders must resolve to ONE doc, not two near-duplicates. Folder is
+ * still a strong placement hint (it seeds the search query) and is preserved on
+ * the doc + in its header for traceability — it just no longer defines identity.
+ */
+export function registryKey(parts: { system?: string | null; title: string }): string {
+  return [parts.system ?? "", parts.title]
     .map((s) => s.trim().toLowerCase().replace(/\s+/g, " "))
     .join("|");
 }
