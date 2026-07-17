@@ -19,6 +19,9 @@ export type TurnFile = {
   folderPath?: string;
   contentType?: string;
   extractedMarkdown: string;
+  /** What the extractor made of it (docx/pdf/text/spreadsheet/image/…) — part of
+   *  judging the role, since a filename alone routinely lies. */
+  extractionKind?: string;
 };
 
 export type TurnDeps = {
@@ -73,7 +76,10 @@ function searchQuery(file: TurnFile): string {
 }
 
 export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDeps): Promise<TurnOutcome> {
-  const role = classifyRole(file);
+  const role = classifyRole({
+    ...file,
+    extraction: { kind: file.extractionKind ?? "", text: file.extractedMarkdown },
+  });
   const [candidates, relatedFiles] = await Promise.all([
     deps.kbSearch(searchQuery(file), 5),
     deps.listRelatedFiles ? deps.listRelatedFiles(file) : Promise.resolve([]),
