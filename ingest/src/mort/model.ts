@@ -8,6 +8,13 @@ import { env } from "../env.js";
  * Codex-OAuth baggage Mort must not inherit, per review §15.7). Same providers
  * the existing normalise pipeline uses.
  */
+/** The configured model's name — for logs and error messages. */
+export function modelLabel(): string {
+  if (env.INGEST_AI_PROVIDER === "anthropic") return `anthropic/${env.ANTHROPIC_MODEL}`;
+  if (env.INGEST_AI_PROVIDER === "openai") return `openai/${env.OPENAI_MODEL}`;
+  return `openrouter/${env.OPENROUTER_MODEL}`;
+}
+
 export function getModel(): LanguageModel {
   if (env.INGEST_AI_PROVIDER === "anthropic") return anthropic(env.ANTHROPIC_MODEL);
   if (env.INGEST_AI_PROVIDER === "openai") {

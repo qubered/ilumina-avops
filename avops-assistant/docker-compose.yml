@@ -179,7 +179,11 @@ services:
       # independent of the assistant's chat model.
       INGEST_AI_PROVIDER: ${INGEST_AI_PROVIDER:-openrouter}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${INGEST_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      # Mort's decision is structured output over a rich schema. Free/small models
+      # fail it outright ("No object generated: could not parse the response") or
+      # return nonsense — invented doc ids, SOPs marked SKIP. Use a capable model;
+      # this is the single biggest quality lever in the whole pipeline.
+      OPENROUTER_MODEL: ${INGEST_MODEL:-anthropic/claude-sonnet-4.5}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${INGEST_MODEL:-gpt-4o}
