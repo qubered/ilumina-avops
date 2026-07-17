@@ -97,6 +97,24 @@ def is_placeholder(st: os.stat_result) -> bool:
     return bool(attrs & _PLACEHOLDER_MASK)
 
 
+def hydrate_file(path: Path) -> bool:
+    """
+    Pull an online-only (Files-On-Demand) file down from OneDrive.
+
+    Touching a placeholder's data triggers a full recall; the read blocks until
+    the whole file has landed, so afterwards the bytes are complete — never a
+    partial mid-hydration read. Returns False if it couldn't be downloaded
+    (OneDrive paused/offline), so the caller can leave it for the next scan.
+    """
+    try:
+        with path.open("rb") as f:
+            f.read(1)  # first byte triggers the recall of the entire file
+        return not is_placeholder(path.stat())
+    except OSError as e:
+        log(f"HYDRATE-FAIL {path.name}: {e}")
+        return False
+
+
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -278,6 +296,9 @@ class Scan:
     sigs: dict[str, FileSig]
     root_ok: bool
     seen: int = 0
+    #: Cloud-only files. Still eligible — their size/mtime read fine without a
+    #: download, so we only pull the bytes when Mort actually needs them.
+    placeholders: set[str] = field(default_factory=set)
     skipped_placeholders: int = 0
     skipped_quarantine: int = 0
     skipped_settling: int = 0
@@ -289,8 +310,10 @@ class Scan:
     def summary(self) -> str:
         """Why the eligible count is what it is — silence is a terrible diagnostic."""
         bits = [f"{len(self.sigs)} eligible of {self.seen} file(s)"]
+        if self.placeholders:
+            bits.append(f"{len(self.placeholders)} online-only")
         if self.skipped_placeholders:
-            bits.append(f"{self.skipped_placeholders} online-only (not downloaded)")
+            bits.append(f"{self.skipped_placeholders} online-only, skipped (--no-hydrate)")
         if self.skipped_quarantine:
             bits.append(f"{self.skipped_quarantine} quarantined (conflict/lock/temp)")
         if self.skipped_settling:
@@ -322,9 +345,12 @@ def scan_folder(root: Path, stable_seconds: float, max_mb: float) -> Scan:
                 scan.skipped_quarantine += 1
                 continue
             st = path.stat()
+            rel = path.relative_to(root).as_posix()
+            # A placeholder still reports its real size + mtime, so it can be
+            # signature-compared without downloading anything. Note it and move on;
+            # run_once pulls the bytes only if this file actually needs sending.
             if is_placeholder(st):
-                scan.skipped_placeholders += 1
-                continue
+                scan.placeholders.add(rel)
             if st.st_size == 0:
                 scan.skipped_empty += 1
                 continue
@@ -334,9 +360,9 @@ def scan_folder(root: Path, stable_seconds: float, max_mb: float) -> Scan:
                 continue
             if st.st_size / 1_048_576 > max_mb:
                 scan.skipped_large += 1
-                log(f"SKIP  {path.relative_to(root).as_posix()} (> {max_mb} MB)")
+                log(f"SKIP  {rel} (> {max_mb} MB)")
                 continue
-            scan.sigs[path.relative_to(root).as_posix()] = FileSig(st.st_size, st.st_mtime_ns)
+            scan.sigs[rel] = FileSig(st.st_size, st.st_mtime_ns)
         except (FileNotFoundError, PermissionError, OSError) as e:
             # Don't swallow these silently — an unreadable folder looks identical
             # to an empty one otherwise.
@@ -360,6 +386,21 @@ def config() -> argparse.Namespace:
     p.add_argument("--min-fraction", type=float, default=float(os.environ.get("MIN_FRACTION", "0.5")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--dry-run", action="store_true", help="print the plan, send nothing")
+    # OneDrive Files-On-Demand: download a cloud-only file when (and only when)
+    # Mort needs its bytes. Without this the watcher can't read them at all.
+    p.add_argument(
+        "--hydrate",
+        dest="hydrate",
+        action="store_true",
+        default=os.environ.get("HYDRATE", "1").lower() not in ("0", "false", "no"),
+        help="download online-only files on demand (default)",
+    )
+    p.add_argument(
+        "--no-hydrate",
+        dest="hydrate",
+        action="store_false",
+        help="skip online-only files instead of downloading them",
+    )
     args = p.parse_args()
     missing = [n for n, v in (("--folder", args.folder), ("--url", args.url), ("--key", args.key)) if not v]
     if missing and not args.dry_run:
@@ -368,6 +409,13 @@ def config() -> argparse.Namespace:
 
 
 _reported_scan = False
+
+
+def _needs_bytes(rel: str, sig: FileSig, known: dict[str, KnownRow]) -> bool:
+    """True if we'd have to read this file's content — new, changed, or returning
+    from a tombstone. Unchanged files are settled by (size, mtime) alone."""
+    row = known.get(rel)
+    return row is None or row.status == "tombstoned" or row.size != sig.size or row.mtime_ns != sig.mtime_ns
 
 
 def run_once(root: Path, manifest: Manifest, args: argparse.Namespace) -> ChangeSet:
@@ -380,11 +428,51 @@ def run_once(root: Path, manifest: Manifest, args: argparse.Namespace) -> Change
     if not _reported_scan or args.once or args.dry_run or not current:
         log(f"scan: {scan.summary()}")
         _reported_scan = True
+
+    known = manifest.known()
+
+    # --- On-demand hydration -------------------------------------------------
+    # OneDrive Files-On-Demand leaves files in the cloud. Their size + mtime read
+    # fine without downloading, so pull the bytes ONLY for the files Mort actually
+    # needs to read (new / changed / returning). Anything already ingested and
+    # unchanged stays in the cloud — so this can't become a re-download loop.
+    def defer(rel: str) -> None:
+        """
+        Leave a file exactly as the manifest already has it: don't send it, and
+        crucially don't let it look DELETED. A file we can't read is unknown, not
+        gone — otherwise a paused OneDrive would tombstone real KB docs.
+        """
+        row = known.get(rel)
+        if row is not None and row.status == "active":
+            current[rel] = FileSig(row.size, row.mtime_ns)  # reads as unchanged → no-op
+        else:
+            current.pop(rel, None)  # never ingested and unreadable → just ignore it
+
+    if scan.placeholders:
+        if not args.hydrate:
+            for rel in list(scan.placeholders):
+                defer(rel)
+            scan.skipped_placeholders = len(scan.placeholders)
+        elif not args.dry_run:
+            need = [r for r in sorted(scan.placeholders) if r in current and _needs_bytes(r, current[r], known)]
+            if need:
+                log(f"hydrating {len(need)} online-only file(s) from OneDrive — this downloads them")
+                for rel in need:
+                    if not hydrate_file(root / rel):
+                        defer(rel)  # still cloud-only; retry next scan, don't call it deleted
+
+    def checksum(rel: str) -> str:
+        # A dry run must never trigger a download, so cloud-only files get a
+        # sentinel instead of a real hash (they still report as CREATE).
+        if args.dry_run and rel in scan.placeholders:
+            return f"cloud-not-downloaded:{rel}"
+        return sha256(root / rel)
+
     cs = plan_changes(
         current,
-        manifest.known(),
+        known,
         manifest.baseline(),
-        checksum_fn=lambda rel: sha256(root / rel),
+        checksum_fn=checksum,
         min_fraction=args.min_fraction,
         root_ok=scan.root_ok,
     )
