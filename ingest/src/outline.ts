@@ -115,6 +115,27 @@ export async function deleteDocument(id: string): Promise<void> {
   await rpc("documents.delete", { id });
 }
 
+/**
+ * True when Outline refused us a document — 403 (not allowed OR not there) or 404.
+ * On its own this does NOT mean the doc is gone: probe with getDocument to tell a
+ * deleted doc from one we merely can't write to. Guessing wrong either way is bad
+ * (forget a live doc → duplicate it; keep a dead one → fail forever).
+ */
+export function isOutlineDenied(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /Outline \S+ failed \((403|404)\)/.test(msg);
+}
+
+/** Can Mort still see this document at all? */
+export async function documentVisible(id: string): Promise<boolean> {
+  try {
+    await getDocument(id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Archive a document — reversible removal; preferred over delete for approved tombstones. */
 export async function archiveDocument(id: string): Promise<void> {
   await rpc("documents.archive", { id });

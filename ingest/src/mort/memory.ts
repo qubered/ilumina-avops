@@ -185,6 +185,29 @@ export async function claimDoc(doc: MortDoc): Promise<{ doc: MortDoc; created: b
   return { doc: existing!, created: false };
 }
 
+/**
+ * Forget a doc Mort thought he maintained — used when the registry points at a
+ * document that no longer exists in Outline (someone deleted it). Without this,
+ * the stale row makes every future write to that logical doc 403 forever.
+ */
+export async function forgetDoc(mortId: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT outline_document_id FROM mort_docs WHERE mort_id = $1`, [mortId]);
+    const outlineId = rows[0]?.outline_document_id as string | undefined;
+    await client.query(`DELETE FROM mort_source_doc_relations WHERE mort_id = $1`, [mortId]);
+    if (outlineId) await client.query(`DELETE FROM mort_doc_state WHERE outline_document_id = $1`, [outlineId]);
+    await client.query(`DELETE FROM mort_docs WHERE mort_id = $1`, [mortId]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function findMortIdByOutlineId(outlineDocumentId: string): Promise<string | null> {
   const { rows } = await pool.query(`SELECT mort_id FROM mort_docs WHERE outline_document_id = $1 LIMIT 1`, [outlineDocumentId]);
   return rows.length ? (rows[0].mort_id as string) : null;

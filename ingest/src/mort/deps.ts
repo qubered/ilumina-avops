@@ -4,8 +4,10 @@ import {
   archiveDocument,
   createDocument,
   deleteDocument,
+  documentVisible,
   ensureCollection,
   getDocument,
+  isOutlineDenied,
   uploadAttachment,
 } from "../outline.js";
 import { decide } from "./decide.js";
@@ -20,6 +22,7 @@ import {
   enqueueReview,
   findDocByRegistryKey,
   findMortIdByOutlineId,
+  forgetDoc,
   getBlob,
   getSourceRelations,
   listRelatedSources,
@@ -61,9 +64,28 @@ async function createOrUpdateDoc(
   // Fast path: the logical doc already exists → additive update, never a dup.
   const existing = await findDocByRegistryKey(regKey);
   if (existing) {
-    await writeMortRegion(existing.outlineDocumentId, args.regionBody, selfUserId);
-    await addRelation(args.sourceId, existing.mortId, "updated");
-    return existing.outlineDocumentId;
+    try {
+      await writeMortRegion(existing.outlineDocumentId, args.regionBody, selfUserId);
+      await addRelation(args.sourceId, existing.mortId, "updated");
+      return existing.outlineDocumentId;
+    } catch (err) {
+      if (!isOutlineDenied(err)) throw err;
+      // Outline said no. That's either "someone deleted this doc" or "the bot
+      // can't write here" — and the two need opposite responses, so probe rather
+      // than guess. Forgetting a live doc would duplicate it; keeping a dead one
+      // 403s forever.
+      if (await documentVisible(existing.outlineDocumentId)) {
+        throw new Error(
+          `Mort maintains doc ${existing.outlineDocumentId} but cannot write to it — grant the Mort bot ` +
+            `user edit access to that document's collection in Outline. (${err instanceof Error ? err.message : err})`,
+        );
+      }
+      console.warn(
+        `[mort] registry pointed at ${existing.outlineDocumentId}, which is gone from Outline — forgetting it and recreating`,
+      );
+      await forgetDoc(existing.mortId);
+      // fall through and create a fresh doc
+    }
   }
 
   const coll = await ensureCollection(collName);
@@ -111,7 +133,16 @@ export function buildTurnDeps(selfUserId: string | null): TurnDeps {
         excludeSourceId: file.sourceId,
         folderOrigin: file.folderPath ?? null,
       }),
-    getDocumentText: async (docId) => (await getDocument(docId)).text,
+    // A stale search hit (indexed, since deleted) must not kill the turn — Mort
+    // just decides without that candidate's body.
+    getDocumentText: async (docId) => {
+      try {
+        return (await getDocument(docId)).text;
+      } catch (err) {
+        console.warn(`[mort] candidate ${docId} unreadable (stale index?): ${err instanceof Error ? err.message : err}`);
+        return null;
+      }
+    },
     decide,
     updateRegion: async (docId, regionBody) => {
       await writeMortRegion(docId, regionBody, selfUserId);
