@@ -15,6 +15,7 @@ import {
   countPoints,
   deleteDocPoints,
   ensureCollection,
+  metadataToPayload,
   upsertChunks,
 } from "../src/lib/rag/store";
 
@@ -63,9 +64,7 @@ async function main() {
           title,
           url,
           category: "Sample KB",
-          zone: metadata.zone,
-          system: metadata.system,
-          docType: metadata.docType,
+          ...metadataToPayload(metadata),
         },
       })),
     );

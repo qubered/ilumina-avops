@@ -21,11 +21,19 @@ export const decisionSchema = z.object({
   collection: z.string().nullable().describe("Collection name for a CREATE, else null"),
   confidence: z.number().min(0).max(1).describe("0-1 confidence this is the right action AND target"),
   rationale: z.string().describe("One or two sentences, in Mort's voice, on why"),
-  regionBody: z
+  // Semantic metadata — the model classifies; the code injects the deterministic
+  // fields (source files, folder origin, tier, dates) around these.
+  zone: z.array(z.string()).describe("Venue zones covered (e.g. Main Stage). Empty if not applicable."),
+  system: z.array(z.string()).describe("Systems covered (Video, Audio, Lighting, Network…). Empty if not applicable."),
+  docType: z.string().nullable().describe("Document type (How-to, Reference, Policy, Troubleshooting…) or null"),
+  entities: z
+    .array(z.string())
+    .describe("Specific gear/rooms named in the content (grandMA3, LED wall, Milli machines). Empty if none."),
+  bodyMarkdown: z
     .string()
     .describe(
-      "Content for Mort's region on CREATE/UPDATE_ADDITIVE: the Key:value metadata header " +
-        "(Zone/System/Type…) then the cleaned markdown body. Empty for ATTACH/REVIEW/SKIP.",
+      "The cleaned article body in markdown for CREATE/UPDATE_ADDITIVE. Do NOT include a metadata " +
+        "header or an H1 title — Mort adds those. Empty for ATTACH/REVIEW/SKIP.",
     ),
 });
 export type Decision = z.infer<typeof decisionSchema>;
@@ -41,8 +49,9 @@ Rules:
 - One file does NOT mean one page. Prefer updating/attaching to the right existing doc over creating near-duplicates.
 - 'reference'/'media' roles are usually ATTACH, not CREATE. 'truth'/'structured' usually CREATE or UPDATE_ADDITIVE.
 - Set confidence honestly. If the best candidate is a weak match, lower confidence (it will be sent to review).
-- For CREATE/UPDATE_ADDITIVE, regionBody starts with a Key:value metadata header (blank-line separated), e.g.
-  "Zone: Main Stage\\n\\nSystem: Lighting\\n\\nType: Procedure", then the cleaned body. Never invent facts.`;
+- Classify zone/system/docType/entities from the CONTENT. Leave them empty rather than guessing.
+- bodyMarkdown is the cleaned body ONLY — no metadata header, no H1 title (Mort renders those himself
+  from your classification plus facts he already knows). Never invent facts.`;
 
 export type DecideInput = {
   fileName: string;

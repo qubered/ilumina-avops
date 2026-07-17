@@ -1,6 +1,7 @@
 import { classifyRole } from "./classify.js";
 import type { Decision, DecideInput } from "./decide.js";
 import type { KbHit } from "./kbclient.js";
+import { renderMetadataHeader, roleToTier } from "./metadata.js";
 import type { FileRole } from "./types.js";
 
 /**
@@ -83,6 +84,23 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
 
   const base = { sourceId: file.sourceId, action: decision.action, rationale: decision.rationale, confidence: decision.confidence };
 
+  // Mort's region = a rendered metadata header (model's classification + facts
+  // the code already knows) followed by the cleaned body.
+  const regionBody = [
+    renderMetadataHeader({
+      zone: decision.zone,
+      system: decision.system,
+      docType: decision.docType,
+      entities: decision.entities,
+      sourceFiles: [file.fileName],
+      folderOrigin: file.folderPath ?? null,
+      sourceTier: roleToTier(role),
+    }),
+    decision.bodyMarkdown.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
   if (decision.action === "SKIP") {
     await deps.journal({ ...base, action: "skip" });
     return { role, decided: "SKIP", executed: "skipped" };
@@ -96,7 +114,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       sourceId: file.sourceId,
       targetDocId: decision.targetDocId,
       rationale: decision.rationale,
-      payload: { title: decision.title, collection: decision.collection, regionBody: decision.regionBody },
+      payload: { title: decision.title, collection: decision.collection, regionBody },
       dedupeKey: `${decision.action}:${file.sourceId}:${decision.targetDocId ?? "new"}`,
     });
     await deps.journal({ ...base, action: `proposed:${decision.action}` });
@@ -109,7 +127,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       const docId = await deps.createDoc({
         title: decision.title ?? file.fileName,
         collection: decision.collection,
-        regionBody: decision.regionBody,
+        regionBody,
         sourceId: file.sourceId,
       });
       await deps.journal({ ...base, mortId: docId, action: "create" });
@@ -126,7 +144,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
         });
         return { role, decided: "UPDATE_ADDITIVE", executed: "review" };
       }
-      await deps.updateRegion(decision.targetDocId, decision.regionBody);
+      await deps.updateRegion(decision.targetDocId, regionBody);
       await deps.journal({ ...base, mortId: decision.targetDocId, action: "update" });
       return { role, decided: "UPDATE_ADDITIVE", executed: "updated", docId: decision.targetDocId };
     }

@@ -16,6 +16,10 @@ export type KbPayload = {
   zone: string[];
   system: string[];
   docType: string[];
+  // From Mort's richer header (R3). Absent on points indexed before R3 —
+  // re-run a full sync to backfill.
+  entities: string[];
+  sourceTier: string | null;
 };
 
 export type SearchHit = KbPayload & { score: number };
@@ -100,6 +104,12 @@ export async function countPoints(): Promise<number> {
 
 export function metadataToPayload(
   meta: DocMetadata,
-): Pick<KbPayload, "zone" | "system" | "docType"> {
-  return { zone: meta.zone, system: meta.system, docType: meta.docType };
+): Pick<KbPayload, "zone" | "system" | "docType" | "entities" | "sourceTier"> {
+  return {
+    zone: meta.zone,
+    system: meta.system,
+    docType: meta.docType,
+    entities: meta.entities,
+    sourceTier: meta.sourceTier,
+  };
 }

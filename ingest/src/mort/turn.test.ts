@@ -11,7 +11,11 @@ function makeDecision(over: Partial<Decision>): Decision {
     collection: "Lighting",
     confidence: 0.9,
     rationale: "because",
-    regionBody: "Zone: Main Stage\n\nbody",
+    zone: ["Main Stage"],
+    system: ["Lighting"],
+    docType: "How-to",
+    entities: ["LED wall"],
+    bodyMarkdown: "## Steps\n\nDo the thing.",
     ...over,
   };
 }
