@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """
+DEPRECATED — do not run this. Use `mort_watcher.py` (see run-watcher.bat).
+
+This version MOVES each processed file into `_processed/`. Against a live
+OneDrive-synced folder that is destructive: the move syncs back to the cloud and
+reorganises the crew's SharePoint, and any edited file lands in `_processed/`
+where this script skips it — so edits and deletions are never re-sent. Kept for
+reference only; the instructions below are historical.
+
 Watch a folder and send new files to the ILUMINA ingest server.
 
 Power Automate Desktop downloads SharePoint documents into a folder; this
@@ -7,9 +15,9 @@ script notices each new file, base64-encodes it, and POSTs it to the ingest
 endpoint (which AI-normalises it into an Outline KB article). Processed files
 move to `_processed/`, failures to `_failed/`, so nothing is sent twice.
 
-Setup (on the machine that runs Power Automate Desktop):
+Setup (historical — see mort_watcher.py instead):
     pip install requests
-    set INGEST_URL=https://ingest.qubered.com/ingest
+    set INGEST_URL=https://ilumina-ingest.qubered.com/ingest
     set INGEST_API_KEY=<your INGEST_API_KEY>
     set WATCH_FOLDER=C:\\SharePointDownloads
     python folder_watcher.py
