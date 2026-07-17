@@ -9,6 +9,8 @@ import { pool } from "./db.js";
 export async function initMortSchema(): Promise<void> {
   await pool.query(`
     -- Corpus map: every source file Mort knows about. source_id = watcher rel path.
+    -- The library: every file Mort has been given, what he understood it to be,
+    -- and what it's about — whether or not it ever becomes an article.
     CREATE TABLE IF NOT EXISTS mort_sources (
       source_id     text PRIMARY KEY,
       checksum      text,
@@ -16,9 +18,16 @@ export async function initMortSchema(): Promise<void> {
       folder_origin text,
       status        text NOT NULL DEFAULT 'active',   -- active | tombstoned
       summary       text,
+      zone          text[] NOT NULL DEFAULT '{}',
+      system        text[] NOT NULL DEFAULT '{}',
+      entities      text[] NOT NULL DEFAULT '{}',
       created_at    timestamptz NOT NULL DEFAULT now(),
       updated_at    timestamptz NOT NULL DEFAULT now()
     );
+    -- Additive for tables created before the library gained understanding.
+    ALTER TABLE mort_sources ADD COLUMN IF NOT EXISTS zone     text[] NOT NULL DEFAULT '{}';
+    ALTER TABLE mort_sources ADD COLUMN IF NOT EXISTS system   text[] NOT NULL DEFAULT '{}';
+    ALTER TABLE mort_sources ADD COLUMN IF NOT EXISTS entities text[] NOT NULL DEFAULT '{}';
 
     -- KB documents Mort maintains. mort_id = Mort's canonical slug.
     CREATE TABLE IF NOT EXISTS mort_docs (

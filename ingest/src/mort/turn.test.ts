@@ -7,6 +7,7 @@ import { runMortTurn, type TurnDeps, type TurnFile } from "./turn.js";
 function makeDecision(over: Partial<Decision>): Decision {
   return {
     action: "CREATE",
+    summary: "Word procedure for LED wall rigging",
     targetDocId: null,
     title: "New Doc",
     collection: "Lighting",
@@ -109,6 +110,41 @@ test("UPDATE_ADDITIVE with no target → review, never a blind write", async () 
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.updated.length, 0);
+});
+
+test("HOLD → filed in the library, no KB action, no review noise", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "HOLD", confidence: 0.9 }));
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "held");
+  assert.equal(calls.created, 0);
+  assert.equal(calls.updated.length, 0);
+  assert.equal(calls.reviews.length, 0, "holding is not a proposal — nothing to approve");
+});
+
+test("HOLD in shadow mode is still just held (not queued)", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "HOLD", confidence: 0.9 }));
+  const out = await runMortTurn(FILE, { mode: "shadow", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "held");
+  assert.equal(calls.reviews.length, 0);
+});
+
+test("understanding is recorded on every path, even SKIP", async () => {
+  const { deps } = fakeDeps(makeDecision({ action: "SKIP", summary: "duplicate of the v3 show file" }));
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.understanding.summary, "duplicate of the v3 show file");
+  assert.deepEqual(out.understanding.entities, ["LED wall"]);
+});
+
+test("the library is offered to the decision", async () => {
+  let seen: unknown;
+  const { deps } = fakeDeps(makeDecision({ action: "HOLD" }));
+  deps.listRelatedFiles = async () => [{ sourceId: "Lighting/MainStage_v3.show.gz", role: "reference", summary: "old show file" }];
+  deps.decide = async (input) => {
+    seen = input.relatedFiles;
+    return { decision: makeDecision({ action: "HOLD" }), tokens: 0 };
+  };
+  await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.deepEqual(seen, [{ sourceId: "Lighting/MainStage_v3.show.gz", role: "reference", summary: "old show file" }]);
 });
 
 test("SKIP → nothing executed", async () => {

@@ -23,6 +23,8 @@ export type TurnFile = {
 
 export type TurnDeps = {
   kbSearch: (query: string, limit?: number) => Promise<KbHit[]>;
+  /** Other files already in Mort's library that look related (his own corpus, not the KB). */
+  listRelatedFiles?: (file: TurnFile) => Promise<Array<{ sourceId: string; role: string; summary: string | null }>>;
   getDocumentText: (docId: string) => Promise<string | null>;
   decide: (input: DecideInput) => Promise<DecideResult>;
   /** Update Mort's region in an existing doc. */
@@ -59,8 +61,10 @@ export type TurnOutcome = {
   role: FileRole;
   decided: Decision["action"];
   /** What actually happened (may differ from decided when gated to review). */
-  executed: "created" | "updated" | "attached" | "review" | "skipped";
+  executed: "created" | "updated" | "attached" | "review" | "skipped" | "held";
   docId?: string;
+  /** What Mort understood the file to be — recorded in the library whatever he decided. */
+  understanding: { summary: string; zone: string[]; system: string[]; entities: string[] };
 };
 
 function searchQuery(file: TurnFile): string {
@@ -70,7 +74,10 @@ function searchQuery(file: TurnFile): string {
 
 export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDeps): Promise<TurnOutcome> {
   const role = classifyRole(file);
-  const candidates = await deps.kbSearch(searchQuery(file), 5);
+  const [candidates, relatedFiles] = await Promise.all([
+    deps.kbSearch(searchQuery(file), 5),
+    deps.listRelatedFiles ? deps.listRelatedFiles(file) : Promise.resolve([]),
+  ]);
   const top = candidates[0];
   const candidateBody = top ? await deps.getDocumentText(top.docId) : null;
 
@@ -81,7 +88,17 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
     extractedMarkdown: file.extractedMarkdown,
     candidates,
     candidateBody,
+    relatedFiles,
   });
+
+  // Recorded in the library on every path — even SKIP/HOLD. This is how Mort
+  // stays aware of a file he didn't turn into an article.
+  const understanding = {
+    summary: decision.summary,
+    zone: decision.zone,
+    system: decision.system,
+    entities: decision.entities,
+  };
 
   const base = {
     sourceId: file.sourceId,
@@ -118,7 +135,16 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
 
   if (decision.action === "SKIP") {
     await deps.journal({ ...base, action: "skip" });
-    return { role, decided: "SKIP", executed: "skipped" };
+    return { role, decided: "SKIP", executed: "skipped", understanding };
+  }
+
+  // HOLD: understood and filed in the library, with no KB action — reference
+  // material with no home yet, or something not worth a page. It isn't gated to
+  // review even in shadow, because there is nothing for a human to approve; the
+  // file simply sits in the library (bytes kept) until a page wants it.
+  if (decision.action === "HOLD") {
+    await deps.journal({ ...base, action: "hold" });
+    return { role, decided: "HOLD", executed: "held", understanding };
   }
 
   // Gate: shadow mode, low confidence, an explicit REVIEW, or a target the model
@@ -141,7 +167,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       dedupeKey: `${decision.action}:${file.sourceId}:${(inventedTarget ? null : decision.targetDocId) ?? "new"}`,
     });
     await deps.journal({ ...base, action: `proposed:${decision.action}` });
-    return { role, decided: decision.action, executed: "review" };
+    return { role, decided: decision.action, executed: "review", understanding };
   }
 
   // Live + confident: execute the safe actions.
@@ -154,7 +180,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
         sourceId: file.sourceId,
       });
       await deps.journal({ ...base, mortId: docId, action: "create" });
-      return { role, decided: "CREATE", executed: "created", docId };
+      return { role, decided: "CREATE", executed: "created", docId, understanding };
     }
     case "UPDATE_ADDITIVE": {
       if (!decision.targetDocId) {
@@ -165,11 +191,11 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
           rationale: "update decided but no target doc",
           dedupeKey: `UPDATE_ADDITIVE:${file.sourceId}:notarget`,
         });
-        return { role, decided: "UPDATE_ADDITIVE", executed: "review" };
+        return { role, decided: "UPDATE_ADDITIVE", executed: "review", understanding };
       }
       await deps.updateRegion(decision.targetDocId, regionBody);
       await deps.journal({ ...base, mortId: decision.targetDocId, action: "update" });
-      return { role, decided: "UPDATE_ADDITIVE", executed: "updated", docId: decision.targetDocId };
+      return { role, decided: "UPDATE_ADDITIVE", executed: "updated", docId: decision.targetDocId, understanding };
     }
     case "ATTACH": {
       // Live + confident + we can attach → do it. Otherwise propose (the worker
@@ -177,7 +203,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       if (decision.targetDocId && deps.attachFile) {
         await deps.attachFile(decision.targetDocId, file.sourceId);
         await deps.journal({ ...base, mortId: decision.targetDocId, action: "attach" });
-        return { role, decided: "ATTACH", executed: "attached", docId: decision.targetDocId };
+        return { role, decided: "ATTACH", executed: "attached", docId: decision.targetDocId, understanding };
       }
       await deps.enqueueReview({
         action: "ATTACH",
@@ -187,9 +213,9 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
         dedupeKey: `ATTACH:${file.sourceId}:${decision.targetDocId ?? "new"}`,
       });
       await deps.journal({ ...base, action: "proposed:ATTACH" });
-      return { role, decided: "ATTACH", executed: "review", docId: decision.targetDocId ?? undefined };
+      return { role, decided: "ATTACH", executed: "review", docId: decision.targetDocId ?? undefined, understanding };
     }
     default:
-      return { role, decided: decision.action, executed: "review" };
+      return { role, decided: decision.action, executed: "review", understanding };
   }
 }
