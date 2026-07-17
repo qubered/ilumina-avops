@@ -277,16 +277,38 @@ class Manifest:
 class Scan:
     sigs: dict[str, FileSig]
     root_ok: bool
+    seen: int = 0
     skipped_placeholders: int = 0
     skipped_quarantine: int = 0
+    skipped_settling: int = 0
+    skipped_empty: int = 0
+    skipped_large: int = 0
+    errors: int = 0
+    first_error: str = ""
+
+    def summary(self) -> str:
+        """Why the eligible count is what it is — silence is a terrible diagnostic."""
+        bits = [f"{len(self.sigs)} eligible of {self.seen} file(s)"]
+        if self.skipped_placeholders:
+            bits.append(f"{self.skipped_placeholders} online-only (not downloaded)")
+        if self.skipped_quarantine:
+            bits.append(f"{self.skipped_quarantine} quarantined (conflict/lock/temp)")
+        if self.skipped_settling:
+            bits.append(f"{self.skipped_settling} still settling")
+        if self.skipped_empty:
+            bits.append(f"{self.skipped_empty} empty")
+        if self.skipped_large:
+            bits.append(f"{self.skipped_large} too big")
+        if self.errors:
+            bits.append(f"{self.errors} unreadable ({self.first_error})")
+        return " · ".join(bits)
 
 
 def scan_folder(root: Path, stable_seconds: float, max_mb: float) -> Scan:
     """Gather cheap signatures for eligible, hydrated, stable files."""
     if not root.is_dir():
         return Scan(sigs={}, root_ok=False)
-    out: dict[str, FileSig] = {}
-    skipped_ph = skipped_q = 0
+    scan = Scan(sigs={}, root_ok=True)
     now = time.time()
     for path in root.rglob("*"):
         try:
@@ -295,25 +317,34 @@ def scan_folder(root: Path, stable_seconds: float, max_mb: float) -> Scan:
             rel_parts = path.relative_to(root).parts
             if any(part in SKIP_DIRS for part in rel_parts):
                 continue
+            scan.seen += 1
             if is_quarantined(path.name):
-                skipped_q += 1
+                scan.skipped_quarantine += 1
                 continue
             st = path.stat()
             if is_placeholder(st):
-                skipped_ph += 1
+                scan.skipped_placeholders += 1
                 continue
             if st.st_size == 0:
+                scan.skipped_empty += 1
                 continue
             # Stability: no writes in the last `stable_seconds` (download settled).
             if (now - st.st_mtime) < stable_seconds:
+                scan.skipped_settling += 1
                 continue
             if st.st_size / 1_048_576 > max_mb:
+                scan.skipped_large += 1
                 log(f"SKIP  {path.relative_to(root).as_posix()} (> {max_mb} MB)")
                 continue
-            out[path.relative_to(root).as_posix()] = FileSig(st.st_size, st.st_mtime_ns)
-        except (FileNotFoundError, PermissionError, OSError):
+            scan.sigs[path.relative_to(root).as_posix()] = FileSig(st.st_size, st.st_mtime_ns)
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            # Don't swallow these silently — an unreadable folder looks identical
+            # to an empty one otherwise.
+            scan.errors += 1
+            if not scan.first_error:
+                scan.first_error = f"{type(e).__name__}: {e}"
             continue
-    return Scan(out, root_ok=True, skipped_placeholders=skipped_ph, skipped_quarantine=skipped_q)
+    return scan
 
 
 def config() -> argparse.Namespace:
@@ -336,9 +367,19 @@ def config() -> argparse.Namespace:
     return args
 
 
+_reported_scan = False
+
+
 def run_once(root: Path, manifest: Manifest, args: argparse.Namespace) -> ChangeSet:
+    global _reported_scan
     scan = scan_folder(root, args.stable_seconds, args.max_mb)
     current = scan.sigs
+
+    # Report what the scan saw: on the first pass, on --once/--dry-run, and any
+    # time nothing is eligible (the case that's otherwise silent and baffling).
+    if not _reported_scan or args.once or args.dry_run or not current:
+        log(f"scan: {scan.summary()}")
+        _reported_scan = True
     cs = plan_changes(
         current,
         manifest.known(),
@@ -357,9 +398,11 @@ def run_once(root: Path, manifest: Manifest, args: argparse.Namespace) -> Change
     if ops:
         log(
             f"plan: +{len(cs.created)} ~{len(cs.updated)} mv{len(cs.moved)} "
-            f"tomb{len(cs.deleted)} back{len(cs.untombstoned)} "
-            f"(ph{scan.skipped_placeholders} q{scan.skipped_quarantine})"
+            f"tomb{len(cs.deleted)} back{len(cs.untombstoned)}"
         )
+    elif current:
+        # Eligible files, but nothing to do — they're already sent (unchanged).
+        log(f"nothing to do — {len(current)} file(s) already up to date")
     if args.dry_run:
         for p in cs.created: log(f"  CREATE {p}")
         for p in cs.updated: log(f"  UPDATE {p}")
