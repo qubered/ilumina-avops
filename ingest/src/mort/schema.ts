@@ -103,6 +103,9 @@ export async function initMortSchema(): Promise<void> {
       content_hash text NOT NULL,
       data         bytea NOT NULL,
       status       text NOT NULL DEFAULT 'pending',  -- pending | running | dead
+      -- Re-check this file even if its content is unchanged: a page it might
+      -- belong on has just appeared.
+      force        boolean NOT NULL DEFAULT false,
       attempts     integer NOT NULL DEFAULT 0,
       last_error   text,
       run_after    timestamptz NOT NULL DEFAULT now(),
@@ -113,6 +116,7 @@ export async function initMortSchema(): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS mort_jobs_live_uniq
       ON mort_jobs (source_id, content_hash) WHERE status IN ('pending', 'running');
     CREATE INDEX IF NOT EXISTS mort_jobs_claim ON mort_jobs (status, run_after);
+    ALTER TABLE mort_jobs ADD COLUMN IF NOT EXISTS force boolean NOT NULL DEFAULT false;
 
     -- Runtime settings (e.g. authoring mode) — overrides env defaults, editable
     -- from the admin UI without a redeploy.

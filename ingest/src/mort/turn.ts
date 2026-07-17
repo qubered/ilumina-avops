@@ -153,6 +153,15 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
     return { role, decided: "HOLD", executed: "held", understanding };
   }
 
+  // An ATTACH with nowhere to go is not a decision a human can action — there is
+  // no page to attach to yet. Don't make it review noise: remember the file and
+  // move on. When a page it belongs on appears, the held file is re-checked and
+  // attached then.
+  if (decision.action === "ATTACH" && (!decision.targetDocId || inventedTarget)) {
+    await deps.journal({ ...base, action: "hold:no-target" });
+    return { role, decided: "HOLD", executed: "held", understanding };
+  }
+
   // Gate: shadow mode, low confidence, an explicit REVIEW, or a target the model
   // invented → propose, don't execute.
   const gated =

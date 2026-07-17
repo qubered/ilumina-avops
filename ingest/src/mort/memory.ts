@@ -350,6 +350,40 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
   return rows as ReviewRow[];
 }
 
+/**
+ * Held files that look related and still have their bytes parked — i.e. reference
+ * material Mort filed with nowhere to put it. When a page they might belong on
+ * finally appears, these get re-checked so the artifact lands on it.
+ */
+export async function listHeldRelatives(params: {
+  excludeSourceId: string;
+  folderOrigin?: string | null;
+  system?: string[];
+  entities?: string[];
+  limit?: number;
+}): Promise<Array<{ sourceId: string; folderOrigin: string | null; checksum: string | null }>> {
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.folder_origin, s.checksum
+       FROM mort_sources s
+       JOIN mort_blobs b ON b.source_id = s.source_id
+      WHERE s.status = 'active'
+        AND s.source_id <> $1
+        AND ( ($2::text   IS NOT NULL AND s.folder_origin = $2)
+           OR ($3::text[] IS NOT NULL AND s.system   && $3::text[])
+           OR ($4::text[] IS NOT NULL AND s.entities && $4::text[]) )
+      ORDER BY s.updated_at DESC
+      LIMIT $5`,
+    [
+      params.excludeSourceId,
+      params.folderOrigin ?? null,
+      params.system?.length ? params.system : null,
+      params.entities?.length ? params.entities : null,
+      Math.min(Math.max(params.limit ?? 10, 1), 25),
+    ],
+  );
+  return rows.map((r) => ({ sourceId: r.source_id, folderOrigin: r.folder_origin, checksum: r.checksum }));
+}
+
 // --- Current-state facts (R1 slice 3) --------------------------------------
 
 export type MortFact = {

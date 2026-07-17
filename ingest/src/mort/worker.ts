@@ -9,6 +9,7 @@ import { indexEvents } from "./eventindex.js";
 import {
   claimJob,
   completeJob,
+  enqueueJob,
   failJob,
   reapStuckJobs,
   tokensToday,
@@ -17,13 +18,15 @@ import {
 import {
   deleteBlob,
   deleteEventsByHash,
+  getBlob,
   getEventHashes,
   getSource,
   insertEvent,
+  listHeldRelatives,
   saveBlob,
   upsertSource,
 } from "./memory.js";
-import { runMortTurn, type TurnDeps } from "./turn.js";
+import { runMortTurn, type TurnDeps, type TurnOutcome } from "./turn.js";
 
 /**
  * Worker for the durable job queue (v1.7 ops rails). Jobs live in Postgres, so a
@@ -110,8 +113,10 @@ async function drain(): Promise<void> {
 
 async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
   // Skip unchanged files (the watcher re-sends whole files; hash short-circuits).
+  // `force` overrides it: the content is the same, but a page this file might
+  // belong on has just appeared, so the decision may differ now.
   const known = await getSource(job.sourceId);
-  if (known?.checksum === job.contentHash && known.status === "active") {
+  if (!job.force && known?.checksum === job.contentHash && known.status === "active") {
     console.log(`[mort] ${job.sourceId}: unchanged, skipped`);
     return;
   }
@@ -196,4 +201,44 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
   console.log(
     `[mort] ${job.sourceId}: ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""} — ${outcome.understanding.summary}`,
   );
+
+  // A page just appeared. Files Mort was holding with nowhere to go may belong on
+  // it — re-check them now rather than leaving them parked forever. This is what
+  // closes the ordering problem: a schematic that arrives before its page gets
+  // held, then attached once the page exists.
+  if (outcome.executed === "created") await recheckHeldRelatives(job, outcome);
+}
+
+async function recheckHeldRelatives(job: MortJob, outcome: TurnOutcome): Promise<void> {
+  try {
+    const held = await listHeldRelatives({
+      excludeSourceId: job.sourceId,
+      folderOrigin: job.folderPath,
+      system: outcome.understanding.system,
+      entities: outcome.understanding.entities,
+    });
+    if (!held.length) return;
+
+    let queued = 0;
+    for (const h of held) {
+      const blob = await getBlob(h.sourceId);
+      if (!blob) continue; // no bytes parked → nothing to attach
+      const ok = await enqueueJob({
+        sourceId: h.sourceId,
+        fileName: blob.fileName,
+        contentType: blob.contentType,
+        folderPath: h.folderOrigin,
+        contentHash: h.checksum ?? "recheck",
+        data: blob.data,
+        force: true, // same bytes, new context — don't let the unchanged check skip it
+      });
+      if (ok) queued++;
+    }
+    if (queued) {
+      console.log(`[mort] new page for ${job.sourceId} — re-checking ${queued} held file(s) that may belong on it`);
+    }
+  } catch (err) {
+    // Never fail a completed turn because the follow-up didn't queue.
+    console.warn(`[mort] could not re-check held files after ${job.sourceId}:`, err);
+  }
 }

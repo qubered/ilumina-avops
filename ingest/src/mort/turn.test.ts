@@ -156,7 +156,9 @@ test("SKIP → nothing executed", async () => {
 });
 
 test("ATTACH without an attach executor → proposed for review", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-7", confidence: 0.9 }));
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-7", confidence: 0.9 }), false, [
+    hit("doc-7"),
+  ]);
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.reviews[0].action, "ATTACH");
@@ -172,18 +174,28 @@ test("live + confident ATTACH with executor → attaches, no review", async () =
   assert.equal(calls.reviews.length, 0);
 });
 
-test("live + confident ATTACH to an INVENTED target → review, never executed", async () => {
+test("ATTACH to an INVENTED target → held, never attached and never review noise", async () => {
   // kb_search returned nothing, but the model emitted a plausible doc id anyway.
-  // Acting on it 403s against Outline — or lands on a real but wrong doc.
+  // Acting on it 403s against Outline — or lands on a real but wrong doc. And
+  // there's nothing a human could approve, so it's not a proposal: remember the
+  // file and move on.
   const { deps, calls } = fakeDeps(
     makeDecision({ action: "ATTACH", targetDocId: "made-up-id", confidence: 0.99 }),
     true,
     [],
   );
   const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
-  assert.equal(out.executed, "review");
+  assert.equal(out.executed, "held");
   assert.equal(calls.attached.length, 0, "must not attach to a guessed doc");
-  assert.equal(calls.reviews.length, 1);
+  assert.equal(calls.reviews.length, 0, "nothing to approve — don't queue it");
+});
+
+test("ATTACH with no target at all → held (the page doesn't exist yet)", async () => {
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: null, confidence: 0.9 }), true);
+  const out = await runMortTurn(FILE, { mode: "live", confidenceThreshold: 0.6 }, deps);
+  assert.equal(out.executed, "held");
+  assert.equal(calls.reviews.length, 0);
+  assert.equal(calls.attached.length, 0);
 });
 
 test("live + confident UPDATE to an INVENTED target → review, never written", async () => {
@@ -209,7 +221,9 @@ test("live + confident UPDATE to a REAL candidate still executes", async () => {
 });
 
 test("shadow ATTACH always proposes even with an executor", async () => {
-  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true);
+  const { deps, calls } = fakeDeps(makeDecision({ action: "ATTACH", targetDocId: "doc-9", confidence: 0.9 }), true, [
+    hit("doc-9"),
+  ]);
   const out = await runMortTurn(FILE, { mode: "shadow", confidenceThreshold: 0.6 }, deps);
   assert.equal(out.executed, "review");
   assert.equal(calls.attached.length, 0);

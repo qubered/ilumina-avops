@@ -22,16 +22,18 @@ export type MortJob = {
   contentHash: string;
   data: Buffer;
   attempts: number;
+  /** Re-check even if the content is unchanged (a related page just appeared). */
+  force: boolean;
 };
 
 /** Enqueue a turn. Idempotent: one live job per (source, content version). */
-export async function enqueueJob(job: Omit<MortJob, "id" | "attempts">): Promise<boolean> {
+export async function enqueueJob(job: Omit<MortJob, "id" | "attempts" | "force"> & { force?: boolean }): Promise<boolean> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_jobs (source_id, file_name, content_type, folder_path, content_hash, data)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO mort_jobs (source_id, file_name, content_type, folder_path, content_hash, data, force)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT DO NOTHING
      RETURNING id`,
-    [job.sourceId, job.fileName, job.contentType, job.folderPath, job.contentHash, job.data],
+    [job.sourceId, job.fileName, job.contentType, job.folderPath, job.contentHash, job.data, job.force ?? false],
   );
   return rows.length > 0;
 }
@@ -50,7 +52,7 @@ export async function claimJob(): Promise<MortJob | null> {
          FOR UPDATE SKIP LOCKED
          LIMIT 1
       )
-      RETURNING id::int AS id, source_id, file_name, content_type, folder_path, content_hash, data, attempts`,
+      RETURNING id::int AS id, source_id, file_name, content_type, folder_path, content_hash, data, attempts, force`,
   );
   if (!rows.length) return null;
   const r = rows[0];
@@ -63,6 +65,7 @@ export async function claimJob(): Promise<MortJob | null> {
     contentHash: r.content_hash,
     data: r.data as Buffer,
     attempts: r.attempts,
+    force: r.force === true,
   };
 }
 
