@@ -174,17 +174,24 @@ export const agentTools = {
  * unreachable the assistant simply answers in the neutral prompt — correct, just
  * without the character.
  */
-let personaCache: string | null = null;
+let personaCache: { persona: string; chatVoice: string } | null = null;
 
 export async function buildSystemPrompt(): Promise<string> {
   if (personaCache === null) {
     const identity = await getMortIdentity();
-    personaCache = identity?.persona ?? "";
+    personaCache = { persona: identity?.persona ?? "", chatVoice: identity?.chatVoice ?? "" };
   }
-  if (!personaCache) return SYSTEM_PROMPT;
+  if (!personaCache.persona) return SYSTEM_PROMPT;
   return [
-    personaCache,
+    personaCache.persona,
+    // Who he is, then how he talks. The voice is chat-only — the ingest agent
+    // that writes the KB never gets it, because a procedure page in that
+    // register would be worse documentation and would outlive every
+    // conversation it was charming in.
+    personaCache.chatVoice,
     `VOICE: let that character colour your greetings, framing and asides — a dry aside is welcome. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
