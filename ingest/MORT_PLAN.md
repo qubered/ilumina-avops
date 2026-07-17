@@ -186,6 +186,68 @@ safe and shippable. Order is a recommendation.
 - **R6 — Agent loop + conventions.** Promote the single decision call to a bounded
   multi-step loop only where the golden eval shows single-pass fails; learned conventions
   gated on decay/precedence/caps + an edit UI.
+- **R7 — Two-pass turn + the dream.** *(built)* See below.
+
+---
+
+## Part III-b — R7: giving Mort a view wider than one file
+
+v1.3's turn made its decision from one `kb_search` on `folder + filename`, one candidate
+body, and a library lookup filtered to the same folder. Three consequences, all structural
+rather than accidental:
+
+1. **Retrieval couldn't use what the file was about.** Facets (`system`, `entities`,
+   `zone`) were produced *by* the decision, so they didn't exist yet when retrieval ran.
+   A schematic in `Video/` was invisible while authoring from a file in `Lighting/`, however
+   obviously they were the same LED wall.
+2. **A file was spent once it landed.** Attached bytes were deleted, so one file could
+   never serve a second page — but one file being useful in several places is the normal
+   case, not the exception.
+3. **Nothing ever looked at the corpus.** A turn can only answer questions *about its
+   file*. It cannot see that three artifacts imply a page nobody wrote, or that two pages
+   contradict each other. And file #12 was decided when Mort knew 11 files; by #300 nothing
+   revisits it.
+
+### R7.1 — The turn is now three passes
+`classify → understand → gather → decide`.
+
+- **`understand.ts`** — a cheap, deliberately tiny-schema call: what IS this file? Breaks
+  the chicken-and-egg (facets before retrieval) and is the most reliable call Mort makes,
+  which matters because structured-output failures scale with schema size.
+- **`gather.ts`** — searches four axes (placement / summary / entities / system+zone),
+  merges and dedupes hits (a doc found by several axes gets a *small* rank nudge —
+  agreement is evidence, not proof), reads the top **3** bodies rather than 1, and queries
+  the library by folder **OR** system **OR** entities.
+- **`decide.ts`** — no longer emits the understanding, so its schema shrank to the
+  decision. Gains `relatedSourceIds` (which library files it drew on) → rendered into the
+  `Related:` header, validated against what was offered, exactly like `targetDocId`.
+
+Cost: two model calls per file instead of one (~2× per-file spend, still ≈$1.20 for a
+300-file corpus on `gpt-4o-mini`). Both passes' tokens count against `MORT_DAILY_TOKEN_CAP`.
+
+### R7.2 — Files are library assets
+Bytes now live as long as the source is active (reclaimed only in `removeSource`). Rejecting
+"attach this to THAT page" no longer destroys the file — it said nothing about whether it
+belongs somewhere else.
+
+Every page write (`created` / `updated` / `attached`) re-checks library relatives that
+aren't already on that doc. **Termination:** only organic jobs may spawn `force` jobs, so a
+write cascades exactly one level. Without that rule, A attaches → re-check B → B attaches →
+re-check A, forever.
+
+### R7.3 — The dream
+`dream.ts` + `proposal.ts`, on `MORT_DREAM_INTERVAL_HOURS` (default 24, `0` = off) or
+`POST /mort/dream`. Reads a digest of the whole library + doc registry — summaries only,
+never bodies — and raises `MISSING_PAGE` / `CONTRADICTION` / `MERGE` / `SPLIT`.
+
+- **Never writes.** Every question it asks is a judgement call about what the KB should
+  *be*; that's the user's call. Proposals only.
+- **Idempotent** on `dream:{kind}:{hash(sorted refs)}`, so a nightly dream re-raises nothing
+  already dismissed. Without this the queue fills with copies and gets ignored wholesale —
+  which costs the real findings too.
+- **Validated** against the digest: a proposal citing a file or page that doesn't exist is
+  dropped, same reasoning as the invented-target guard.
+- Shows in the review UI with no Approve button — there's no edit queued behind it.
 
 ---
 

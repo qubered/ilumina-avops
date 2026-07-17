@@ -52,3 +52,26 @@ export interface ReviewItem {
   /** UNIQUE — makes re-proposals idempotent. */
   dedupeKey: string;
 }
+
+/** One library file, as the dream pass sees it (R7). Summary only — never the
+ *  body: the point is to see the whole corpus at once. */
+export type LibraryEntry = {
+  sourceId: string;
+  role: string;
+  summary: string | null;
+  zone: string[];
+  system: string[];
+  entities: string[];
+  /** Whether anything has ever been written from or about this file. */
+  hasDoc: boolean;
+};
+
+/** One page Mort maintains, as the dream pass sees it (R7). */
+export type DocEntry = {
+  mortId: string;
+  outlineDocumentId: string;
+  title: string;
+  system: string | null;
+  collection: string | null;
+  sourceCount: number;
+};

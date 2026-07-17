@@ -1,7 +1,9 @@
 import { pool } from "./db.js";
 import type { EventRow } from "./events.js";
 import type {
+  DocEntry,
   FileRole,
+  LibraryEntry,
   MortDoc,
   MortDocState,
   MortSource,
@@ -351,12 +353,19 @@ export async function listPendingReviews(limit = 100): Promise<ReviewRow[]> {
 }
 
 /**
- * Held files that look related and still have their bytes parked — i.e. reference
- * material Mort filed with nowhere to put it. When a page they might belong on
- * finally appears, these get re-checked so the artifact lands on it.
+ * Artifacts in the library that bear on a page Mort just wrote, and aren't on it
+ * yet. A page appearing (or growing) changes what its siblings should do: a
+ * schematic that arrived before its page had nowhere to go, and one already
+ * filed on another page may belong on this one too — a file is not spent when
+ * it lands somewhere.
+ *
+ * Scoped to sources with bytes, since only those can be attached; `excludeMortId`
+ * drops the ones already on this doc so a re-check can't loop on its own work.
  */
-export async function listHeldRelatives(params: {
+export async function listAttachableRelatives(params: {
   excludeSourceId: string;
+  /** Doc just written — sources already attached to it are skipped. */
+  excludeMortId?: string | null;
   folderOrigin?: string | null;
   system?: string[];
   entities?: string[];
@@ -371,17 +380,71 @@ export async function listHeldRelatives(params: {
         AND ( ($2::text   IS NOT NULL AND s.folder_origin = $2)
            OR ($3::text[] IS NOT NULL AND s.system   && $3::text[])
            OR ($4::text[] IS NOT NULL AND s.entities && $4::text[]) )
+        AND ( $5::text IS NULL OR NOT EXISTS (
+              SELECT 1 FROM mort_source_doc_relations r
+               WHERE r.source_id = s.source_id AND r.mort_id = $5 AND r.relation = 'attached') )
       ORDER BY s.updated_at DESC
-      LIMIT $5`,
+      LIMIT $6`,
     [
       params.excludeSourceId,
       params.folderOrigin ?? null,
       params.system?.length ? params.system : null,
       params.entities?.length ? params.entities : null,
+      params.excludeMortId ?? null,
       Math.min(Math.max(params.limit ?? 10, 1), 25),
     ],
   );
   return rows.map((r) => ({ sourceId: r.source_id, folderOrigin: r.folder_origin, checksum: r.checksum }));
+}
+
+// --- Corpus digests (R7 dream) ---------------------------------------------
+
+/**
+ * The whole library, one line each, for the dream pass. Summaries only — never
+ * bodies: the point is to see the shape of the corpus at once, which is exactly
+ * what a per-file turn cannot do.
+ *
+ * `hasDoc` is what makes "nothing has been written about these" answerable.
+ */
+export async function libraryDigest(limit = 400): Promise<LibraryEntry[]> {
+  const { rows } = await pool.query(
+    `SELECT s.source_id, s.role, s.summary, s.zone, s.system, s.entities,
+            EXISTS (SELECT 1 FROM mort_source_doc_relations r WHERE r.source_id = s.source_id) AS has_doc
+       FROM mort_sources s
+      WHERE s.status = 'active' AND s.role <> 'event_log'
+      ORDER BY s.updated_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 1000)],
+  );
+  return rows.map((r) => ({
+    sourceId: r.source_id,
+    role: r.role,
+    summary: r.summary,
+    zone: r.zone ?? [],
+    system: r.system ?? [],
+    entities: r.entities ?? [],
+    hasDoc: r.has_doc === true,
+  }));
+}
+
+/** Every page Mort maintains, for the dream pass. */
+export async function docDigest(limit = 300): Promise<DocEntry[]> {
+  const { rows } = await pool.query(
+    `SELECT d.mort_id, d.outline_document_id, d.title, d.system, d.collection,
+            (SELECT count(*)::int FROM mort_source_doc_relations r WHERE r.mort_id = d.mort_id) AS source_count
+       FROM mort_docs d
+      ORDER BY d.updated_at DESC
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), 1000)],
+  );
+  return rows.map((r) => ({
+    mortId: r.mort_id,
+    outlineDocumentId: r.outline_document_id,
+    title: r.title,
+    system: r.system,
+    collection: r.collection,
+    sourceCount: r.source_count,
+  }));
 }
 
 // --- Current-state facts (R1 slice 3) --------------------------------------

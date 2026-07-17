@@ -21,6 +21,16 @@ const APPROVE_LABEL: Record<string, string> = {
   tombstone: "Approve removal",
 };
 
+/** Dream proposals (R7) are observations about the corpus, not queued edits. */
+const isDream = (action: string) => action.startsWith("DREAM:");
+
+const DREAM_LABEL: Record<string, string> = {
+  "DREAM:MISSING_PAGE": "Nothing covers this",
+  "DREAM:CONTRADICTION": "These disagree",
+  "DREAM:MERGE": "Same page twice",
+  "DREAM:SPLIT": "Two topics, one page",
+};
+
 /**
  * Only offer Approve for something that can actually run. An ATTACH/UPDATE whose
  * target was stripped (Mort guessed a doc id) has nowhere to go — offering the
@@ -35,6 +45,12 @@ function actionable(item: MortReviewItem): boolean {
 function whyNotActionable(item: MortReviewItem): string {
   if (NEEDS_TARGET.has(item.action) && !item.target_doc_id) {
     return "no valid target doc — Mort guessed one, so there's nothing to attach to. Dismiss it.";
+  }
+  if (isDream(item.action)) {
+    // Deliberately has no Approve. There's no edit queued behind it: a dream is
+    // Mort telling you something about the KB's shape, and what to do about it
+    // is a judgement call he shouldn't be making for you.
+    return "something Mort noticed across the whole KB — no edit queued. Act on it, or dismiss.";
   }
   return "flagged for a human — no auto-action";
 }
@@ -73,11 +89,15 @@ export function MortReviewList({ items }: { items: MortReviewItem[] }) {
         {items.map((item) => (
           <li key={item.id} className="rounded-md border border-divider bg-menu px-3 py-2.5 text-sm">
             <div className="flex items-center gap-2">
-              <span className={`text-xs font-semibold ${ACTION_COLOR[item.action] ?? "text-text-2"}`}>{item.action}</span>
+              <span className={`text-xs font-semibold ${isDream(item.action) ? "text-accent" : ACTION_COLOR[item.action] ?? "text-text-2"}`}>
+                {isDream(item.action) ? DREAM_LABEL[item.action] ?? "Noticed" : item.action}
+              </span>
               <span className="font-medium text-text">{item.payload?.title ?? item.source_id ?? "—"}</span>
               {item.payload?.collection && <span className="text-xs text-text-3">→ {item.payload.collection}</span>}
             </div>
-            {item.source_id && <p className="mt-0.5 text-[12px] text-text-3">{item.source_id}</p>}
+            {!isDream(item.action) && item.source_id && (
+              <p className="mt-0.5 text-[12px] text-text-3">{item.source_id}</p>
+            )}
             {item.rationale && <p className="mt-1 text-text-2">{item.rationale}</p>}
             <div className="mt-2 flex items-center gap-2">
               {actionable(item) ? (
