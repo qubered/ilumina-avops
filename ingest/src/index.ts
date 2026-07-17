@@ -32,7 +32,8 @@ import {
 } from "./mort/memory.js";
 import { MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
 import { executeReview } from "./mort/execute.js";
-import { enqueueTurn, getDeps, initWorker } from "./mort/worker.js";
+import { getDeps, initWorker, kickWorker } from "./mort/worker.js";
+import { enqueueJob, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";
 import { getEffectiveMode, getEffectiveThreshold, setMode } from "./mort/config.js";
 
 const bodySchema = z.object({
@@ -136,6 +137,31 @@ app.post("/mort/facts/retire", async (c) => {
   return c.json({ id: parsed.data.id, retired: ok }, ok ? 200 : 404);
 });
 
+// Ops health: queue depth, dead-letters, today's model spend vs the cap.
+app.use("/mort/health", requireReviewAuth);
+app.use("/mort/jobs/revive", requireReviewAuth);
+
+app.get("/mort/health", async (c) => {
+  const [queue, spent, dead] = await Promise.all([queueStats(), tokensToday(), listDeadJobs(10)]);
+  const cap = env.MORT_DAILY_TOKEN_CAP;
+  return c.json({
+    mode: await getEffectiveMode(),
+    queue,
+    tokensToday: spent,
+    dailyTokenCap: cap || null,
+    capReached: cap > 0 && spent >= cap,
+    deadJobs: dead,
+  });
+});
+
+app.post("/mort/jobs/revive", async (c) => {
+  const parsed = z.object({ id: z.coerce.number().int() }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
+  const ok = await reviveJob(parsed.data.id);
+  if (ok) kickWorker();
+  return c.json({ id: parsed.data.id, revived: ok }, ok ? 200 : 404);
+});
+
 // Mort runtime config — the admin UI reads/sets the authoring mode without a redeploy.
 app.use("/mort/config", requireReviewAuth);
 
@@ -217,15 +243,17 @@ app.post("/ingest", async (c) => {
       await renameSource(input.oldSourceId, input.sourceId);
       return c.json({ action: "moved", from: input.oldSourceId, to: input.sourceId }, 202);
     }
-    enqueueTurn({
+    // Durable enqueue — idempotent per (source, content version), survives restarts.
+    const queued = await enqueueJob({
       sourceId: input.sourceId,
       fileName: input.fileName,
       contentType: input.contentType,
-      folderPath: input.folderPath,
+      folderPath: input.folderPath ?? null,
       contentHash,
-      buffer,
+      data: buffer,
     });
-    return c.json({ action: "queued", mode: mortMode }, 202);
+    kickWorker();
+    return c.json({ action: queued ? "queued" : "already-queued", mode: mortMode }, 202);
   }
 
   try {

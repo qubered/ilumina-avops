@@ -157,6 +157,7 @@ export function buildTurnDeps(selfUserId: string | null): TurnDeps {
         action: e.action,
         rationale: e.rationale,
         confidence: e.confidence,
+        tokens: e.tokens,
         model: env.INGEST_AI_PROVIDER,
       }),
   };

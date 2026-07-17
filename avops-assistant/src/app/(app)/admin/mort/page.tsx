@@ -1,14 +1,17 @@
 import {
   getMortConfig,
+  getMortHealth,
   listCurrentFacts,
   listPendingReviews,
   type MortConfig,
   type MortFact,
+  type MortHealth,
   type MortReviewItem,
 } from "@/lib/mort-review";
 import { MortReviewList } from "@/components/mort-review-list";
 import { MortModeSwitcher } from "@/components/mort-mode-switcher";
 import { MortFacts } from "@/components/mort-facts";
+import { MortHealthPanel } from "@/components/mort-health";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +19,15 @@ export default async function AdminMortPage() {
   let items: MortReviewItem[] = [];
   let config: MortConfig | null = null;
   let facts: MortFact[] = [];
+  let health: MortHealth | null = null;
   let error: string | null = null;
   try {
-    [config, items, facts] = await Promise.all([getMortConfig(), listPendingReviews(), listCurrentFacts()]);
+    [config, items, facts, health] = await Promise.all([
+      getMortConfig(),
+      listPendingReviews(),
+      listCurrentFacts(),
+      getMortHealth(),
+    ]);
   } catch (e) {
     error = e instanceof Error ? e.message : "unreachable";
   }
@@ -42,6 +51,7 @@ export default async function AdminMortPage() {
           <MortReviewList items={items} />
         )}
       </section>
+      {health && <MortHealthPanel health={health} />}
       {!error && <MortFacts facts={facts} />}
     </div>
   );

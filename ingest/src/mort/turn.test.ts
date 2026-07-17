@@ -33,7 +33,7 @@ function fakeDeps(decision: Decision, withAttach = false): { deps: TurnDeps; cal
   const deps: TurnDeps = {
     kbSearch: async () => [],
     getDocumentText: async () => null,
-    decide: async () => decision,
+    decide: async () => ({ decision, tokens: 1234 }),
     updateRegion: async (docId) => {
       calls.updated.push({ docId });
     },

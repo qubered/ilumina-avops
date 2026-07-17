@@ -39,6 +39,11 @@ const schema = z
     // live = Mort executes confident create/update; everything else → review.
     MORT_MODE: z.enum(["off", "shadow", "live"]).default("off"),
     MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
+    // Ops rail: stop spending on model calls once this many tokens are used in a
+    // day. Jobs stay queued and resume tomorrow. 0 = no cap.
+    MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
+    // Worker poll interval for the durable queue.
+    MORT_POLL_MS: z.coerce.number().min(250).default(3000),
   })
   .superRefine((env, ctx) => {
     const need = (cond: boolean, path: string, message: string) => {

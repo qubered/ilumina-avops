@@ -81,6 +81,30 @@ export async function initMortSchema(): Promise<void> {
       decided_by   text
     );
 
+    -- Durable job queue (v1.7 ops rails). Jobs carry their bytes so a turn
+    -- survives a restart; retried with backoff and dead-lettered after N attempts
+    -- rather than lost silently. Live mode writes autonomously, so nothing here
+    -- may depend on the process staying up.
+    CREATE TABLE IF NOT EXISTS mort_jobs (
+      id           bigserial PRIMARY KEY,
+      source_id    text NOT NULL,
+      file_name    text NOT NULL,
+      content_type text NOT NULL,
+      folder_path  text,
+      content_hash text NOT NULL,
+      data         bytea NOT NULL,
+      status       text NOT NULL DEFAULT 'pending',  -- pending | running | dead
+      attempts     integer NOT NULL DEFAULT 0,
+      last_error   text,
+      run_after    timestamptz NOT NULL DEFAULT now(),
+      created_at   timestamptz NOT NULL DEFAULT now(),
+      updated_at   timestamptz NOT NULL DEFAULT now()
+    );
+    -- Idempotent enqueue: one live job per (source, content version).
+    CREATE UNIQUE INDEX IF NOT EXISTS mort_jobs_live_uniq
+      ON mort_jobs (source_id, content_hash) WHERE status IN ('pending', 'running');
+    CREATE INDEX IF NOT EXISTS mort_jobs_claim ON mort_jobs (status, run_after);
+
     -- Runtime settings (e.g. authoring mode) — overrides env defaults, editable
     -- from the admin UI without a redeploy.
     CREATE TABLE IF NOT EXISTS mort_settings (

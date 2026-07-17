@@ -1,5 +1,5 @@
 import { classifyRole } from "./classify.js";
-import type { Decision, DecideInput } from "./decide.js";
+import type { DecideInput, DecideResult, Decision } from "./decide.js";
 import type { KbHit } from "./kbclient.js";
 import { renderMetadataHeader, roleToTier } from "./metadata.js";
 import type { FileRole } from "./types.js";
@@ -24,7 +24,7 @@ export type TurnFile = {
 export type TurnDeps = {
   kbSearch: (query: string, limit?: number) => Promise<KbHit[]>;
   getDocumentText: (docId: string) => Promise<string | null>;
-  decide: (input: DecideInput) => Promise<Decision>;
+  decide: (input: DecideInput) => Promise<DecideResult>;
   /** Update Mort's region in an existing doc. */
   updateRegion: (docId: string, regionBody: string) => Promise<void>;
   /** Create a new doc with Mort's region as its body. */
@@ -49,6 +49,7 @@ export type TurnDeps = {
     action: string;
     rationale?: string;
     confidence?: number;
+    tokens?: number;
   }) => Promise<void>;
 };
 
@@ -73,7 +74,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
   const top = candidates[0];
   const candidateBody = top ? await deps.getDocumentText(top.docId) : null;
 
-  const decision = await deps.decide({
+  const { decision, tokens } = await deps.decide({
     fileName: file.fileName,
     folderPath: file.folderPath,
     role,
@@ -82,7 +83,13 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
     candidateBody,
   });
 
-  const base = { sourceId: file.sourceId, action: decision.action, rationale: decision.rationale, confidence: decision.confidence };
+  const base = {
+    sourceId: file.sourceId,
+    action: decision.action,
+    rationale: decision.rationale,
+    confidence: decision.confidence,
+    tokens,
+  };
 
   // Mort's region = a rendered metadata header (model's classification + facts
   // the code already knows) followed by the cleaned body.

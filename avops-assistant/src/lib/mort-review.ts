@@ -87,6 +87,38 @@ export async function searchMortMemory(query: string, limit = 12): Promise<MortM
   }
 }
 
+export type MortHealth = {
+  mode: MortMode;
+  queue: { pending: number; running: number; dead: number };
+  tokensToday: number;
+  dailyTokenCap: number | null;
+  capReached: boolean;
+  deadJobs: Array<{ id: number; sourceId: string; attempts: number; lastError: string | null }>;
+};
+
+/** Ops health: queue depth, dead-letters, today's model spend. Null if unreachable. */
+export async function getMortHealth(): Promise<MortHealth | null> {
+  try {
+    const res = await fetch(`${base()}/mort/health`, {
+      headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as MortHealth;
+  } catch {
+    return null;
+  }
+}
+
+export async function reviveJob(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${base()}/mort/jobs/revive`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.INTERNAL_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  return { ok: res.ok };
+}
+
 export type MortFact = {
   id: number;
   factKey: string;

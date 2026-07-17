@@ -64,7 +64,10 @@ export type DecideInput = {
 
 const MAX_INPUT = 40_000;
 
-export async function decide(input: DecideInput): Promise<Decision> {
+/** The decision plus what it cost — tokens feed the journal and the daily cap. */
+export type DecideResult = { decision: Decision; tokens: number };
+
+export async function decide(input: DecideInput): Promise<DecideResult> {
   const candidateList = input.candidates
     .map((c, i) => `  [${i}] docId=${c.docId} · ${c.title} (score ${c.score.toFixed(2)}) — ${c.breadcrumb}`)
     .join("\n");
@@ -85,12 +88,12 @@ export async function decide(input: DecideInput): Promise<Decision> {
     .filter(Boolean)
     .join("\n");
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: getModel(),
     schema: decisionSchema,
     maxRetries: 0,
     system: `${MORT_AUTHORING_PREAMBLE}\n\n${INSTRUCTIONS}`,
     prompt,
   });
-  return object;
+  return { decision: object, tokens: usage?.totalTokens ?? 0 };
 }

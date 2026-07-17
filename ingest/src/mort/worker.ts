@@ -7,6 +7,14 @@ import { buildTurnDeps } from "./deps.js";
 import { syncEventSheet } from "./events.js";
 import { indexEvents } from "./eventindex.js";
 import {
+  claimJob,
+  completeJob,
+  failJob,
+  reapStuckJobs,
+  tokensToday,
+  type MortJob,
+} from "./jobs.js";
+import {
   deleteBlob,
   deleteEventsByHash,
   getEventHashes,
@@ -18,28 +26,16 @@ import {
 import { runMortTurn, type TurnDeps } from "./turn.js";
 
 /**
- * In-process job queue for Mort turns (MORT_PLAN §v1.1 async). /ingest enqueues
- * and returns 202; this drains sequentially so per-doc writes never interleave.
- *
- * v1 is intentionally simple (in-memory, single worker). Durable queue, retries,
- * DLQ, cost caps and alerting are the v1.7 ops-rails hardening (P2). A crash
- * loses in-flight jobs; the watcher re-sends on the next scan (content hashes
- * make that safe), so nothing is permanently dropped.
+ * Worker for the durable job queue (v1.7 ops rails). Jobs live in Postgres, so a
+ * restart or crash loses nothing: orphaned jobs are reaped back to pending,
+ * failures retry with backoff and dead-letter after MAX_ATTEMPTS, and a daily
+ * token cap stops an autonomous Mort from running up unbounded model spend.
  */
 
-export type TurnJob = {
-  sourceId: string;
-  fileName: string;
-  contentType: string;
-  folderPath?: string;
-  contentHash: string;
-  buffer: Buffer;
-};
-
-const queue: TurnJob[] = [];
-let running = false;
 let deps: TurnDeps | null = null;
 let selfUserId: string | null = null;
+let running = false;
+let timer: NodeJS.Timeout | null = null;
 
 export async function initWorker(): Promise<void> {
   selfUserId = await getSelfUserId().catch((e) => {
@@ -47,34 +43,64 @@ export async function initWorker(): Promise<void> {
     return null;
   });
   deps = buildTurnDeps(selfUserId);
-  console.log(`[mort] worker ready (mode=${env.MORT_MODE}, self=${selfUserId ?? "unknown"})`);
-}
 
-export function enqueueTurn(job: TurnJob): void {
-  queue.push(job);
+  const reaped = await reapStuckJobs().catch(() => 0);
+  if (reaped) console.log(`[mort] returned ${reaped} orphaned job(s) to the queue`);
+
+  if (!timer) {
+    timer = setInterval(() => void drain(), env.MORT_POLL_MS);
+    timer.unref?.();
+  }
+  console.log(`[mort] worker ready (mode=${await getEffectiveMode()}, self=${selfUserId ?? "unknown"})`);
   void drain();
 }
 
-/** The real Mort deps (for the review executor). Builds lazily if the worker
- *  wasn't started (e.g. approving proposals while MORT_MODE=off). */
+/** The real Mort deps (also used by the review executor). Builds lazily. */
 export async function getDeps(): Promise<TurnDeps> {
   if (!deps) await initWorker();
   return deps!;
+}
+
+/** Nudge the worker (called right after an enqueue so we don't wait for the tick). */
+export function kickWorker(): void {
+  void drain();
+}
+
+async function overDailyCap(): Promise<boolean> {
+  if (!env.MORT_DAILY_TOKEN_CAP) return false;
+  return (await tokensToday()) >= env.MORT_DAILY_TOKEN_CAP;
 }
 
 async function drain(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    if (!deps) await initWorker(); // lazy: mode may have been flipped to live at runtime
-    if (!deps) return; // init failed — leave jobs queued for the next drain
-    while (queue.length) {
-      const job = queue.shift()!;
+    if (!deps) await initWorker();
+    if (!deps) return;
+
+    for (;;) {
+      const mode = await getEffectiveMode();
+      if (mode === "off") return; // jobs stay queued until Mort is switched back on
+
+      if (await overDailyCap()) {
+        console.warn(
+          `[mort] daily token cap (${env.MORT_DAILY_TOKEN_CAP}) reached — pausing; queued jobs resume tomorrow`,
+        );
+        return;
+      }
+
+      const job = await claimJob();
+      if (!job) return;
+
       try {
         await processJob(job, deps);
+        await completeJob(job.id);
       } catch (err) {
-        // Poison-file isolation: one bad file must not stall the queue.
-        console.error(`[mort] turn failed for ${job.sourceId}:`, err);
+        const message = err instanceof Error ? err.message : String(err);
+        const outcome = await failJob(job.id, job.attempts, message);
+        console.error(
+          `[mort] job ${job.id} (${job.sourceId}) failed on attempt ${job.attempts} → ${outcome}: ${message}`,
+        );
       }
     }
   } finally {
@@ -82,7 +108,7 @@ async function drain(): Promise<void> {
   }
 }
 
-async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
+async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
   // Skip unchanged files (the watcher re-sends whole files; hash short-circuits).
   const known = await getSource(job.sourceId);
   if (known?.checksum === job.contentHash && known.status === "active") {
@@ -91,21 +117,18 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
   }
 
   const mode = await getEffectiveMode();
-  if (mode === "off") {
-    console.log(`[mort] ${job.sourceId}: mode flipped to off, skipped`);
-    return;
-  }
+  if (mode === "off") return;
 
-  const role = classifyRole({ fileName: job.fileName, contentType: job.contentType, folderPath: job.folderPath });
+  const role = classifyRole({ fileName: job.fileName, contentType: job.contentType, folderPath: job.folderPath ?? undefined });
 
   // Event log (R1): reconcile rows into episodic memory instead of authoring a doc.
   if (role === "event_log") {
-    const res = await syncEventSheet(job.sourceId, job.buffer, {
+    const res = await syncEventSheet(job.sourceId, job.data, {
       getHashes: getEventHashes,
       insertRow: insertEvent,
       deleteHashes: deleteEventsByHash,
     });
-    await upsertSource({ sourceId: job.sourceId, checksum: job.contentHash, role, folderOrigin: job.folderPath ?? null });
+    await upsertSource({ sourceId: job.sourceId, checksum: job.contentHash, role, folderOrigin: job.folderPath });
     if (!res.guarded) await indexEvents(job.sourceId, res.insertedRows, res.currentHashes);
     console.log(
       `[mort] ${job.sourceId}: event log — +${res.inserted} -${res.deleted} of ${res.total}${res.guarded ? " (guarded: empty sheet, kept existing)" : ""}`,
@@ -117,15 +140,15 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
   // a later approval (shadow) can upload them.
   const mightAttach = role === "reference" || role === "media";
   if (mightAttach) {
-    await saveBlob(job.sourceId, { fileName: job.fileName, contentType: job.contentType, data: job.buffer });
+    await saveBlob(job.sourceId, { fileName: job.fileName, contentType: job.contentType, data: job.data });
   }
 
-  const extraction = await extract(job.fileName, job.contentType, job.buffer);
+  const extraction = await extract(job.fileName, job.contentType, job.data);
   const outcome = await runMortTurn(
     {
       sourceId: job.sourceId,
       fileName: job.fileName,
-      folderPath: job.folderPath,
+      folderPath: job.folderPath ?? undefined,
       contentType: job.contentType,
       extractedMarkdown: extraction.markdown,
     },
@@ -142,7 +165,7 @@ async function processJob(job: TurnJob, d: TurnDeps): Promise<void> {
     sourceId: job.sourceId,
     checksum: job.contentHash,
     role: outcome.role,
-    folderOrigin: job.folderPath ?? null,
+    folderOrigin: job.folderPath,
   });
   console.log(`[mort] ${job.sourceId}: ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""}`);
 }
