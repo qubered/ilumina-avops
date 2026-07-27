@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MortConfig, MortMode } from "@/lib/mort-review";
+import type { MortConfig, MortMode } from "@/lib/mort-admin";
 
 const MODES: { key: MortMode; label: string; desc: string }[] = [
   { key: "off", label: "Off", desc: "Legacy one-file-one-article pipeline. Mort is dark." },

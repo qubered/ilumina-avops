@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MortFact } from "@/lib/mort-review";
+import type { MortFact } from "@/lib/mort-admin";
 
 /**
  * Current-state facts: deliberate, human-approved statements of what is true now.

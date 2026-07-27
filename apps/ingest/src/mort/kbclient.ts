@@ -1,11 +1,14 @@
-import { env } from "../env.js";
+import { embedQuery } from "@mort/core/kb/embeddings";
+import { searchKb } from "@mort/core/kb/store";
 
 /**
- * Client for the assistant's internal KB search (MORT_PLAN §v1.5). Mort reads
- * the KB through the assistant (single Qdrant owner) over the compose network.
+ * KB search for the ingest authoring pipeline. Used to call the assistant's
+ * /api/internal/kb-search over the compose network (single-Qdrant-owner
+ * boundary); now a direct call into the shared kb/store — both services run
+ * from the same mort-core, so there's no ownership question to route around.
  *
- * Graceful degradation: any failure returns [] and logs — Mort then decides
- * with no KB context rather than the whole ingest turn dying.
+ * Graceful degradation preserved: any failure returns [] and logs — Mort then
+ * decides with no KB context rather than the whole ingest turn dying.
  */
 
 export type KbHit = {
@@ -21,25 +24,22 @@ export type KbHit = {
 };
 
 export async function kbSearch(query: string, limit = 5): Promise<KbHit[]> {
-  if (!env.ASSISTANT_KB_URL) return []; // not configured → no KB context
   try {
-    const res = await fetch(env.ASSISTANT_KB_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.INTERNAL_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, limit }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) {
-      console.error(`[kb-search] assistant returned ${res.status}`);
-      return [];
-    }
-    const json = (await res.json()) as { hits?: KbHit[] };
-    return json.hits ?? [];
+    const vector = await embedQuery(query);
+    const hits = await searchKb(vector, limit);
+    return hits.map((h) => ({
+      docId: h.docId,
+      title: h.title,
+      url: h.url,
+      breadcrumb: h.breadcrumb,
+      score: h.score,
+      text: h.text,
+      zone: h.zone,
+      system: h.system,
+      docType: h.docType,
+    }));
   } catch (err) {
-    console.error("[kb-search] assistant unreachable:", err);
+    console.error("[kb-search] failed:", err);
     return [];
   }
 }

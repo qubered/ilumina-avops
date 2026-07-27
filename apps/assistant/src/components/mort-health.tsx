@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MortHealth } from "@/lib/mort-review";
+import type { MortHealth } from "@/lib/mort-admin";
 
 /** Ops surface: is the queue moving, is anything dead-lettered, what has Mort spent today. */
 export function MortHealthPanel({ health }: { health: MortHealth }) {

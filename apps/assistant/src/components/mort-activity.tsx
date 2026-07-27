@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { MortActiveJob, MortActivity, MortActivityRow, MortLibraryRow } from "@/lib/mort-review";
+import type { MortActiveJob, MortActivity, MortActivityRow, MortLibraryRow } from "@/lib/mort-admin";
 
 /**
  * What Mort is doing, what he's working through, and everything he holds.

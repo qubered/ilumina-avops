@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { decideReview } from "@/lib/mort-review";
+import { decideReview } from "@/lib/mort-admin";
 
-/** Admin-only proxy: approve/reject a Mort proposal (executes in the ingest service). */
+/** Admin-only: approve/reject a Mort proposal (executes directly, no HTTP boundary). */
 export async function POST(req: Request) {
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Admin only" }, { status: 403 });

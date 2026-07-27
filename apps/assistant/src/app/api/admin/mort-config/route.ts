@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { setMortMode } from "@/lib/mort-review";
+import { setMortMode } from "@/lib/mort-admin";
 
-/** Admin-only: set Mort's authoring mode at runtime (proxies to the ingest service). */
+/** Admin-only: set Mort's authoring mode at runtime. */
 export async function POST(req: Request) {
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Admin only" }, { status: 403 });

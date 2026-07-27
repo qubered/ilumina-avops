@@ -11,6 +11,12 @@ export async function register() {
   const { runMigrations } = await import("./lib/db/migrate");
   await runMigrations();
 
+  // The admin UI now queries mort_* tables directly (no more HTTP boundary to
+  // ingest, see mort-admin.ts) — idempotent, so safe even when ingest has
+  // already created them, and necessary when the assistant boots first.
+  const { ensureMortSchema } = await import("@mort/core/memory/schema");
+  await ensureMortSchema();
+
   const { ensureOidcClientRow } = await import("./lib/db/seed-oidc-client");
   await ensureOidcClientRow();
 

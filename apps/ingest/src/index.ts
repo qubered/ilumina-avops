@@ -15,27 +15,10 @@ import {
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
 import type { MiddlewareHandler } from "hono";
 import { ensureMortSchema } from "@mort/core/memory/schema";
-import {
-  appendJournal,
-  enqueueReview,
-  listLibrary,
-  recentActivity,
-  getReviewItem,
-  getSource,
-  insertFact,
-  listCurrentFacts,
-  listPendingReviews,
-  renameSource,
-  resolveReview,
-  retireFact,
-  searchMemory,
-  tombstoneSource,
-} from "@mort/core/memory";
-import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "@mort/core/identity";
-import { executeReview } from "@mort/core/kb/execute";
-import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
-import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "@mort/core/memory/jobs";
-import { getEffectiveMode, getEffectiveThreshold, setMode } from "@mort/core/memory/config";
+import { appendJournal, enqueueReview, getSource, renameSource, tombstoneSource } from "@mort/core/memory";
+import { initWorker, kickWorker, runDream } from "./mort/worker.js";
+import { enqueueJob } from "@mort/core/memory/jobs";
+import { getEffectiveMode } from "@mort/core/memory/config";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
@@ -67,126 +50,14 @@ const requireIngestAuth: MiddlewareHandler = async (c, next) => {
 app.use("/ingest", requireIngestAuth);
 app.use("/ingest/delete", requireIngestAuth);
 
-// Review API — used by the assistant admin UI (INTERNAL_API_KEY) and manual
-// curl (INGEST_API_KEY). Accepts either bearer token.
-const requireReviewAuth: MiddlewareHandler = async (c, next) => {
-  const token = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  const ok = token === env.INGEST_API_KEY || (env.INTERNAL_API_KEY && token === env.INTERNAL_API_KEY);
-  if (!ok) return c.json({ error: "Unauthorized" }, 401);
-  await next();
-};
-app.use("/review", requireReviewAuth);
-app.use("/review/decision", requireReviewAuth);
-
-// Mort's canonical identity — the assistant's chat persona reads this so both
-// faces share one definition (no monorepo: the Docker build contexts can't see a
-// shared dir, so it's served over the internal boundary and cached by the caller).
-app.use("/mort/identity", requireReviewAuth);
-app.get("/mort/identity", (c) =>
-  c.json({
-    persona: MORT_PERSONA,
-    // Chat-only: the authoring agent deliberately does not get this.
-    chatVoice: MORT_CHAT_VOICE,
-    scope: VENUE_SCOPE,
-    sourceOfTruth: SOURCE_OF_TRUTH,
-    safety: SAFETY_RULES,
-  }),
-);
-
-// Read-only view of Mort's own memory (journal + corpus map) for the chat's
-// mort_memory tool: "why is this filed here", "what did you change", "which
-// files feed this page".
-app.use("/mort/memory", requireReviewAuth);
-app.get("/mort/memory", async (c) => {
-  const limit = Number(c.req.query("limit") ?? 20);
-  const res = await searchMemory({
-    q: c.req.query("q"),
-    docId: c.req.query("docId"),
-    limit: Number.isFinite(limit) ? limit : 20,
-  });
-  return c.json(res);
-});
-
-// Current-state facts (R1 slice 3): human-approved "what is true now" records —
-// the only thing allowed to override a documented KB procedure.
-app.use("/mort/facts", requireReviewAuth);
-app.use("/mort/facts/retire", requireReviewAuth);
-
-app.get("/mort/facts", async (c) => {
-  const limit = Number(c.req.query("limit") ?? 25);
-  const facts = await listCurrentFacts(c.req.query("q"), Number.isFinite(limit) ? limit : 25);
-  return c.json({ facts });
-});
-
-const factSchema = z.object({
-  factKey: z.string().min(1),
-  value: z.string().min(1),
-  scope: z.string().optional().nullable(),
-  effectiveFrom: z.string().optional().nullable(),
-  effectiveTo: z.string().optional().nullable(),
-  sourceTier: z.string().optional().nullable(),
-  approvedBy: z.string().min(1),
-  confidence: z.string().optional().nullable(),
-  note: z.string().optional().nullable(),
-});
-
-app.post("/mort/facts", async (c) => {
-  const parsed = factSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
-  const id = await insertFact(parsed.data);
-  await appendJournal({ action: "fact_approved", rationale: `${parsed.data.factKey} = ${parsed.data.value} (by ${parsed.data.approvedBy})` });
-  return c.json({ id }, 201);
-});
-
-app.post("/mort/facts/retire", async (c) => {
-  const parsed = z.object({ id: z.coerce.number().int() }).safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
-  const ok = await retireFact(parsed.data.id);
-  return c.json({ id: parsed.data.id, retired: ok }, ok ? 200 : 404);
-});
-
-// Ops health: queue depth, dead-letters, today's model spend vs the cap.
-app.use("/mort/health", requireReviewAuth);
-app.use("/mort/jobs/revive", requireReviewAuth);
-
-app.get("/mort/health", async (c) => {
-  const [queue, spent, dead] = await Promise.all([queueStats(), tokensToday(), listDeadJobs(10)]);
-  const cap = env.MORT_DAILY_TOKEN_CAP;
-  return c.json({
-    mode: await getEffectiveMode(),
-    queue,
-    tokensToday: spent,
-    dailyTokenCap: cap || null,
-    capReached: cap > 0 && spent >= cap,
-    deadJobs: dead,
-  });
-});
-
-app.post("/mort/jobs/revive", async (c) => {
-  const parsed = z.object({ id: z.coerce.number().int() }).safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
-  const ok = await reviveJob(parsed.data.id);
-  if (ok) kickWorker();
-  return c.json({ id: parsed.data.id, revived: ok }, ok ? 200 : 404);
-});
-
-// What Mort is doing and what he holds — the admin activity view. One endpoint
-// so the page renders in a single round-trip.
-app.use("/mort/activity", requireReviewAuth);
-
-app.get("/mort/activity", async (c) => {
-  const limit = Number(c.req.query("limit") ?? 50);
-  const [journal, library, queue] = await Promise.all([
-    recentActivity(Number.isFinite(limit) ? limit : 50),
-    listLibrary(c.req.query("q")),
-    listActiveJobs(),
-  ]);
-  return c.json({ journal, library, queue });
-});
-
+// The old /review and /mort/* admin-UI proxy routes are gone — the assistant
+// calls @mort/core directly now (see apps/assistant/src/lib/mort-admin.ts),
+// no HTTP boundary. /mort/dream stays: it's a curl-only ops endpoint, never
+// called by the assistant.
+//
 // Dream on demand (R7) — the interval is the normal path; this is for "look at
 // everything now, I've just loaded a batch". Proposals only, never writes.
-app.use("/mort/dream", requireReviewAuth);
+app.use("/mort/dream", requireIngestAuth);
 
 app.post("/mort/dream", async (c) => {
   try {
@@ -195,63 +66,6 @@ app.post("/mort/dream", async (c) => {
     return c.json(res);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
-  }
-});
-
-// Mort runtime config — the admin UI reads/sets the authoring mode without a redeploy.
-app.use("/mort/config", requireReviewAuth);
-
-app.get("/mort/config", async (c) => {
-  return c.json({
-    mode: await getEffectiveMode(),
-    threshold: await getEffectiveThreshold(),
-    envDefault: env.MORT_MODE,
-  });
-});
-
-app.post("/mort/config", async (c) => {
-  const parsed = z.object({ mode: z.enum(["off", "shadow", "live"]) }).safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error?.issues }, 400);
-  await setMode(parsed.data.mode);
-  if (parsed.data.mode !== "off") await getDeps(); // warm the worker so the next file processes
-  console.log(`[mort] mode set to ${parsed.data.mode} via admin`);
-  return c.json({ mode: parsed.data.mode });
-});
-
-app.get("/review", async (c) => {
-  const items = await listPendingReviews(200);
-  return c.json({ items });
-});
-
-app.post("/review/decision", async (c) => {
-  const parsed = z
-    .object({ id: z.coerce.number().int(), decision: z.enum(["approve", "reject"]), decidedBy: z.string().optional() })
-    .safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "Invalid body", issues: parsed.error.issues }, 400);
-  const { id, decision, decidedBy } = parsed.data;
-
-  const item = await getReviewItem(id);
-  if (!item) return c.json({ error: "Not found" }, 404);
-  if (item.status !== "pending") return c.json({ error: `already ${item.status}` }, 409);
-
-  if (decision === "reject") {
-    await resolveReview(id, "rejected", decidedBy);
-    // The bytes stay: rejecting "attach this to THAT page" says nothing about
-    // whether the file belongs somewhere else, and Mort re-checks his library
-    // whenever a new page appears. They're reclaimed when the source is deleted.
-    return c.json({ id, status: "rejected" });
-  }
-
-  // Approve → execute the proposed action, then mark approved. If the executor
-  // can't handle it yet (ATTACH/tombstone), leave the item pending and 422.
-  try {
-    const result = await executeReview(item, await getDeps());
-    await resolveReview(id, "approved", decidedBy);
-    await appendJournal({ sourceId: item.source_id, outlineDocumentId: result.docId, action: `approved:${item.action}`, rationale: `review ${id}` });
-    return c.json({ id, status: "approved", ...result });
-  } catch (err) {
-    console.error(`[review] execute ${id} failed:`, err);
-    return c.json({ id, status: "pending", error: err instanceof Error ? err.message : "execute failed" }, 422);
   }
 });
 

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./env": "./src/env.ts",
     "./identity": "./src/identity/index.ts",
     "./model/chat": "./src/model/chat.ts",
     "./model/ingest": "./src/model/ingest.ts",

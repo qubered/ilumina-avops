@@ -9,7 +9,7 @@ import {
   type MortFact,
   type MortHealth,
   type MortReviewItem,
-} from "@/lib/mort-review";
+} from "@/lib/mort-admin";
 import { MortReviewList } from "@/components/mort-review-list";
 import { MortModeSwitcher } from "@/components/mort-mode-switcher";
 import { MortFacts } from "@/components/mort-facts";

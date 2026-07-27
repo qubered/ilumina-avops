@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MortReviewItem } from "@/lib/mort-review";
+import type { MortReviewItem } from "@/lib/mort-admin";
 
 const ACTION_COLOR: Record<string, string> = {
   CREATE: "text-success",

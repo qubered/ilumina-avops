@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { reviveJob } from "@/lib/mort-review";
+import { reviveJob } from "@/lib/mort-admin";
 
 /** Admin-only: re-queue a dead-lettered job. */
 export async function POST(req: Request) {

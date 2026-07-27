@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { createFact, retireFact } from "@/lib/mort-review";
+import { createFact, retireFact } from "@/lib/mort-admin";
 
 /**
  * Admin-only: declare or retire a current-state fact. The approver is taken from
