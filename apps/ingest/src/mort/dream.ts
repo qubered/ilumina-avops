@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { MORT_AUTHORING_PREAMBLE } from "@mort/core/identity";
-import { getModel, modelLabel } from "./model.js";
+import { getModel, modelLabel } from "@mort/core/model/ingest";
 import { dreamSchema, type DreamInput, type DreamProposal } from "./proposal.js";
 import { withRateLimitRetry } from "../ratelimit.js";
 import type { DocEntry, LibraryEntry } from "./types.js";

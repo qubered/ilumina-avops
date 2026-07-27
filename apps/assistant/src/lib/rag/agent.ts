@@ -6,7 +6,7 @@ import { embedQuery } from "./embeddings";
 import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
 
-export { getChatModel, getChatStack, systemPromptOptions } from "./model";
+export { getChatModel, getChatStack, systemPromptOptions } from "@mort/core/model/chat";
 
 /**
  * Agent definition kept importable/server-side so a later Slack bot phase can

@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import type { Gathered } from "./gather.js";
 import { MORT_AUTHORING_PREAMBLE } from "@mort/core/identity";
-import { getModel, modelLabel } from "./model.js";
+import { getModel, modelLabel } from "@mort/core/model/ingest";
 import { withRateLimitRetry } from "../ratelimit.js";
 import type { Understanding } from "./understand.js";
 import type { FileRole } from "./types.js";

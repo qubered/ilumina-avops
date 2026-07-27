@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./identity": "./src/identity/index.ts"
+    "./identity": "./src/identity/index.ts",
+    "./model/chat": "./src/model/chat.ts",
+    "./model/ingest": "./src/model/ingest.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
