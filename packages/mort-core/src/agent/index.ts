@@ -1,12 +1,12 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { MORT_CHAT_VOICE, MORT_PERSONA } from "@mort/core/identity";
-import { listCurrentFacts, searchMortMemory } from "../mort-review";
-import { embedQuery } from "@mort/core/kb/embeddings";
-import { searchEvents } from "@mort/core/kb/events-store";
-import { searchKb } from "@mort/core/kb/store";
+import { MORT_CHAT_VOICE, MORT_PERSONA } from "../identity";
+import { listCurrentFacts, searchMemory } from "../memory";
+import { embedQuery } from "../kb/embeddings";
+import { searchEvents } from "../kb/events-store";
+import { searchKb } from "../kb/store";
 
-export { getChatModel, getChatStack, systemPromptOptions } from "@mort/core/model/chat";
+export { getChatModel, getChatStack, systemPromptOptions } from "../model/chat";
 
 /**
  * Agent definition kept importable/server-side so a later Slack bot phase can
@@ -141,7 +141,9 @@ export const mortMemoryTool = tool({
     query: z.string().describe("What to look up in Mort's journal / file map"),
   }),
   execute: async ({ query }): Promise<Record<string, unknown>> => {
-    const res = await searchMortMemory(query);
+    // limit: 12 preserves the old HTTP client's default (mort-review.ts's
+    // searchMortMemory) — core's own searchMemory() defaults to 20.
+    const res = await searchMemory({ q: query, limit: 12 });
     if (res.journal.length === 0 && res.files.length === 0) {
       return { note: "Nothing in Mort's memory matches that." };
     }

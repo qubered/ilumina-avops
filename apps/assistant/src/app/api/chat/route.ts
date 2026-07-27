@@ -11,7 +11,7 @@ import {
   MAX_STEPS,
   systemPromptOptions,
   type KbSearchResult,
-} from "@/lib/rag/agent";
+} from "@mort/core/agent";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";

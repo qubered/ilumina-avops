@@ -4,7 +4,7 @@ import { streamText } from "ai";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db } from "@/lib/db";
-import { getChatModel } from "@/lib/rag/agent";
+import { getChatModel } from "@mort/core/agent";
 
 function fallbackTitle(firstMessage: string): string {
   const words = firstMessage.trim().split(/\s+/).slice(0, 8).join(" ");
