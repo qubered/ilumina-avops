@@ -2,9 +2,9 @@ import { tool } from "ai";
 import { z } from "zod";
 import { MORT_CHAT_VOICE, MORT_PERSONA } from "@mort/core/identity";
 import { listCurrentFacts, searchMortMemory } from "../mort-review";
-import { embedQuery } from "./embeddings";
-import { searchEvents } from "./events-store";
-import { searchKb } from "./store";
+import { embedQuery } from "@mort/core/kb/embeddings";
+import { searchEvents } from "@mort/core/kb/events-store";
+import { searchKb } from "@mort/core/kb/store";
 
 export { getChatModel, getChatStack, systemPromptOptions } from "@mort/core/model/chat";
 

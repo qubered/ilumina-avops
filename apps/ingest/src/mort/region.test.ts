@@ -8,7 +8,7 @@ import {
   hasMortRegion,
   isMalformedRegion,
   spliceMortRegion,
-} from "./region.js";
+} from "@mort/core/kb/region";
 
 test("empty doc → region block only", () => {
   const out = spliceMortRegion("", "Zone: Main Stage");

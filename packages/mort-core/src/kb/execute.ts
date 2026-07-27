@@ -1,5 +1,5 @@
-import type { ReviewRow } from "@mort/core/memory";
-import type { TurnDeps } from "./turn.js";
+import type { ReviewRow } from "../memory";
+import type { WriteDeps } from "./write-deps";
 
 /**
  * Executes an APPROVED review proposal (MORT_PLAN §P2). CREATE/UPDATE_ADDITIVE
@@ -7,11 +7,15 @@ import type { TurnDeps } from "./turn.js";
  * and non-destructively (region splice). ATTACH and tombstone need the original
  * file bytes / a deletion flow that isn't wired yet — they're surfaced as errors
  * so the caller can leave them pending rather than silently no-op.
+ *
+ * Typed against WriteDeps (not the full ingest-pipeline TurnDeps) — this is
+ * the write-only subset, so callers that never run the LLM pipeline (the
+ * assistant's admin review-approval route) can call it directly.
  */
 
 export type ExecuteResult = { executed: "created" | "updated" | "attached" | "removed"; docId: string };
 
-export async function executeReview(item: ReviewRow, deps: TurnDeps): Promise<ExecuteResult> {
+export async function executeReview(item: ReviewRow, deps: WriteDeps): Promise<ExecuteResult> {
   const payload = item.payload ?? {};
   switch (item.action) {
     case "CREATE": {

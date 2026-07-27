@@ -1,7 +1,7 @@
 import "../src/preload.js";
 import pg from "pg";
 import { env } from "../src/env.js";
-import { deleteDocument } from "../src/outline.js";
+import { deleteDocument } from "@mort/core/kb/outline";
 
 /**
  * Wipe Mort's brain and the pages he wrote. Start over from an empty KB.

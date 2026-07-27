@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldIndexDocument } from "./outline";
+import { shouldIndexDocument } from "./read";
 
 const published = {
   template: false,

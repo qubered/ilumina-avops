@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { env } from "@/lib/env";
-import { embedBatch } from "@/lib/rag/embeddings";
-import { ensureEventsCollection, pruneEvents, upsertEvents, type EventPayload } from "@/lib/rag/events-store";
+import { embedBatch } from "@mort/core/kb/embeddings";
+import { ensureEventsCollection, pruneEvents, upsertEvents, type EventPayload } from "@mort/core/kb/events-store";
 
 /**
  * Internal endpoint (MORT R1): the ingest pushes newly-ingested event rows here;

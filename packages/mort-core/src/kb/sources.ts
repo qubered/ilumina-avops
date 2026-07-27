@@ -1,4 +1,10 @@
-import type { Source } from "../db/schema";
+/**
+ * Structurally identical to apps/assistant's own `Source` (lib/db/schema.ts)
+ * — kept as a separate local definition rather than imported, since a
+ * shared package must not import from an app. Both stay in sync by
+ * construction: this is a tiny, stable literal shape.
+ */
+export type Source = { title: string; url: string; kind?: "kb" | "web" };
 
 /**
  * The system prompt makes the model end answers with a "Sources:" list. The

@@ -11,7 +11,7 @@ import {
   listCollections,
   updateDocument,
   uploadAttachment,
-} from "./outline.js";
+} from "@mort/core/kb/outline";
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
 import type { MiddlewareHandler } from "hono";
 import { ensureMortSchema } from "@mort/core/memory/schema";
@@ -32,7 +32,7 @@ import {
   tombstoneSource,
 } from "@mort/core/memory";
 import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "@mort/core/identity";
-import { executeReview } from "./mort/execute.js";
+import { executeReview } from "@mort/core/kb/execute";
 import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
 import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "@mort/core/memory/jobs";
 import { getEffectiveMode, getEffectiveThreshold, setMode } from "@mort/core/memory/config";

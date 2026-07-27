@@ -8,16 +8,16 @@
 import "dotenv/config";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { chunkMarkdown } from "../src/lib/rag/chunker";
-import { embedBatch } from "../src/lib/rag/embeddings";
-import { parseMetadataBlock } from "../src/lib/rag/metadata";
+import { chunkMarkdown } from "@mort/core/kb/chunker";
+import { embedBatch } from "@mort/core/kb/embeddings";
+import { parseMetadataBlock } from "@mort/core/kb/metadata";
 import {
   countPoints,
   deleteDocPoints,
   ensureCollection,
   metadataToPayload,
   upsertChunks,
-} from "../src/lib/rag/store";
+} from "@mort/core/kb/store";
 
 async function findSampleKbDir(): Promise<string> {
   for (const candidate of ["../sample_kb", "./sample_kb"]) {

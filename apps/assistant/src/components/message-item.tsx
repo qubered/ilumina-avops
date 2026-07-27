@@ -4,7 +4,7 @@ import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Source } from "@/lib/db/schema";
-import { stripTrailingSourcesList } from "@/lib/rag/sources";
+import { stripTrailingSourcesList } from "@mort/core/kb/sources";
 import { FeedbackButtons } from "./feedback-buttons";
 
 function textOf(message: UIMessage): string {

@@ -66,6 +66,9 @@ const schema = z.object({
   MORT_MODE: z.enum(["off", "shadow", "live"]).default("off"),
   MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
+
+  // Fallback collection name if the AI can't pick a fitting section.
+  INGEST_DEFAULT_COLLECTION: z.string().default("Imported"),
 });
 
 export type CoreEnv = z.infer<typeof schema>;

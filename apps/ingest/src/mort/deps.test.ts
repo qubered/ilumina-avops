@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { metaField, slugify } from "./textutil.js";
+import { metaField, slugify } from "@mort/core/kb/textutil";
 
 test("slugify normalises titles", () => {
   assert.equal(slugify("Main Stage — Lighting"), "main-stage-lighting");

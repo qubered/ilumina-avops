@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rewriteAttachmentUrls } from "./attachments";
+import { rewriteAttachmentUrls } from "@mort/core/kb/attachments";
 
 const ID = "0198f2be-58f4-7aaa-bbbb-cccccccccccc";
 

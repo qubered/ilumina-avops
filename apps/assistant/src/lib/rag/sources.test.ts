@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSources, parseTrailingSources, stripTrailingSourcesList } from "./sources";
+import { mergeSources, parseTrailingSources, stripTrailingSourcesList } from "@mort/core/kb/sources";
 
 const OUTLINE = "https://kb.venue.example";
 

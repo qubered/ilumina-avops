@@ -13,7 +13,7 @@ export async function POST() {
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Admin only" }, { status: 403 });
 
-  if (isFullSyncRunning()) {
+  if (await isFullSyncRunning()) {
     return NextResponse.json({ error: "A sync is running — wait for it to finish." }, { status: 409 });
   }
 

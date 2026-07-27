@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkMarkdown, estimateTokens, splitSections, TARGET_TOKENS } from "./chunker";
+import { chunkMarkdown, estimateTokens, splitSections, TARGET_TOKENS } from "@mort/core/kb/chunker";
 
 describe("splitSections", () => {
   it("tracks heading paths across levels", () => {

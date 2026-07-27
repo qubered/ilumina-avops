@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { executeReview } from "./execute.js";
+import { executeReview } from "@mort/core/kb/execute";
 import type { ReviewRow } from "@mort/core/memory";
-import type { TurnDeps } from "./turn.js";
+import type { WriteDeps } from "@mort/core/kb/write-deps";
 
 function row(over: Partial<ReviewRow>): ReviewRow {
   return {
@@ -43,7 +43,7 @@ function fakeDeps(withAttach = true) {
       calls.removed.push({ sourceId });
       return { archivedDocIds: ["doc-arch"] };
     },
-  } as unknown as TurnDeps;
+  } as unknown as WriteDeps;
   return { deps, calls };
 }
 

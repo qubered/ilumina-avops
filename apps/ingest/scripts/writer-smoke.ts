@@ -14,8 +14,8 @@ import {
   getDocument,
   listCollections,
   updateDocument,
-} from "../src/outline.js";
-import { extractMortRegion, spliceMortRegion } from "../src/mort/region.js";
+} from "@mort/core/kb/outline";
+import { extractMortRegion, spliceMortRegion } from "@mort/core/kb/region";
 
 let failures = 0;
 function check(name: string, ok: boolean) {

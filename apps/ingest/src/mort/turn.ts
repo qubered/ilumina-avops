@@ -1,10 +1,10 @@
 import { classifyRole } from "./classify.js";
-import type { DecideInput, DecideResult, Decision, RelatedFile } from "./decide.js";
+import type { DecideInput, DecideResult, Decision } from "./decide.js";
 import { gather, type GatherDeps } from "./gather.js";
-import type { KbHit } from "./kbclient.js";
 import { renderMetadataHeader, roleToTier } from "./metadata.js";
 import type { UnderstandInput, UnderstandResult, Understanding } from "./understand.js";
 import type { FileRole } from "./types.js";
+import type { WriteDeps } from "@mort/core/kb/write-deps";
 
 /**
  * One Mort turn (MORT_PLAN §v1.3, two-pass since §R7):
@@ -33,50 +33,18 @@ export type TurnFile = {
   extractionKind?: string;
 };
 
-export type TurnDeps = GatherDeps & {
-  kbSearch: (query: string, limit?: number) => Promise<KbHit[]>;
-  /** Files already in Mort's library that bear on this one (his own corpus, not the KB). */
-  listRelatedFiles?: (params: {
-    excludeSourceId: string;
-    folderOrigin?: string | null;
-    system?: string[];
-    entities?: string[];
-  }) => Promise<RelatedFile[]>;
-  getDocumentText: (docId: string) => Promise<string | null>;
-  /** Pass 1: what is this file? */
-  understand: (input: UnderstandInput) => Promise<UnderstandResult>;
-  /** Pass 3: what should the KB do about it? */
-  decide: (input: DecideInput) => Promise<DecideResult>;
-  /** Update Mort's region in an existing doc. */
-  updateRegion: (docId: string, regionBody: string) => Promise<void>;
-  /** Create a new doc with Mort's region as its body. */
-  createDoc: (args: { title: string; collection: string | null; regionBody: string; sourceId: string }) => Promise<string>;
-  /** Upload a previously-stored file to a doc and record it in Mort's Files
-   *  section (attach executor). Optional — when absent, ATTACH is proposed. */
-  attachFile?: (docId: string, sourceId: string) => Promise<void>;
-  /** Approved-tombstone removal: archive docs a vanished source solely authored. */
-  removeSource?: (sourceId: string) => Promise<{ archivedDocIds: string[] }>;
-  /** Queue a proposal for human review (idempotent). */
-  enqueueReview: (item: {
-    action: string;
-    sourceId: string;
-    targetDocId?: string | null;
-    rationale?: string;
-    payload?: unknown;
-    dedupeKey: string;
-  }) => Promise<boolean>;
-  journal: (entry: {
-    sourceId: string;
-    /** The doc this entry concerns — always an Outline document id here (the
-     *  turn only ever has createDoc's / targetDocId's Outline id on hand, never
-     *  a real mort_id — see mort-core's mort_journal.outline_document_id). */
-    outlineDocumentId?: string | null;
-    action: string;
-    rationale?: string;
-    confidence?: number;
-    tokens?: number;
-  }) => Promise<void>;
-};
+/**
+ * GatherDeps (kbSearch/getDocumentText/listRelatedFiles) + WriteDeps (the
+ * write-only executors, shared with mort-core's executeReview — see
+ * write-deps.ts) + the two LLM-pipeline passes only the ingest turn runs.
+ */
+export type TurnDeps = GatherDeps &
+  WriteDeps & {
+    /** Pass 1: what is this file? */
+    understand: (input: UnderstandInput) => Promise<UnderstandResult>;
+    /** Pass 3: what should the KB do about it? */
+    decide: (input: DecideInput) => Promise<DecideResult>;
+  };
 
 export type TurnConfig = { mode: TurnMode; confidenceThreshold: number };
 

@@ -1,6 +1,6 @@
 import { env } from "../env.js";
 import { extract } from "../extract.js";
-import { getSelfUserId } from "../outline.js";
+import { getSelfUserId } from "@mort/core/kb/outline";
 import { classifyRole } from "./classify.js";
 import { getEffectiveMode, getEffectiveThreshold } from "@mort/core/memory/config";
 import { buildTurnDeps } from "./deps.js";

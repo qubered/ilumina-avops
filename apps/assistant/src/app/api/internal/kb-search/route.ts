@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { env } from "@/lib/env";
-import { embedQuery } from "@/lib/rag/embeddings";
-import { searchKb } from "@/lib/rag/store";
+import { embedQuery } from "@mort/core/kb/embeddings";
+import { searchKb } from "@mort/core/kb/store";
 
 /**
  * Internal KB search for the Mort ingest agent (MORT_PLAN §v1.5). Mort's

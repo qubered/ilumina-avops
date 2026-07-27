@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { getDocument, updateDocument } from "../outline.js";
-import { withDocLock } from "@mort/core/memory/lock";
-import { getDocState, recordDocState } from "@mort/core/memory";
-import { isMalformedRegion, spliceMortRegion } from "./region.js";
+import { getDocument, updateDocument } from "./outline";
+import { withDocLock } from "../memory/lock";
+import { getDocState, recordDocState } from "../memory";
+import { isMalformedRegion, spliceMortRegion } from "./region";
 
 /**
  * The non-destructive writer (MORT v1.4). Updates ONLY Mort's fenced region in
@@ -43,16 +43,17 @@ export async function writeMortRegion(
     }
 
     const prevState = await getDocState(docId);
+    const updatedById = doc.updatedBy?.id ?? null;
     const humanEditedSince =
       prevState?.lastMortRevisionId != null &&
-      doc.updatedById != null &&
+      updatedById != null &&
       selfUserId != null &&
-      doc.updatedById !== selfUserId &&
+      updatedById !== selfUserId &&
       String(doc.revision ?? "") !== prevState.lastMortRevisionId;
 
     const newText = spliceMortRegion(doc.text, mortBody);
     if (newText === doc.text) {
-      return { docId, revision: doc.revision, changed: false, humanEditedSince };
+      return { docId, revision: doc.revision ?? null, changed: false, humanEditedSince };
     }
 
     const updated = await updateDocument({ id: docId, title: doc.title, text: newText, publish: true });

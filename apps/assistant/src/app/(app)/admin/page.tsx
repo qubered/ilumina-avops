@@ -1,7 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { conversations, db, feedback, kbDocuments, messages, syncRuns, user } from "@/lib/db";
 import { getEnv } from "@/lib/env";
-import { countPoints } from "@/lib/rag/store";
+import { countPoints } from "@mort/core/kb/store";
 import { SyncButton } from "@/components/sync-button";
 
 export const dynamic = "force-dynamic";

@@ -12,7 +12,7 @@ import {
   systemPromptOptions,
   type KbSearchResult,
 } from "@/lib/rag/agent";
-import { mergeSources, parseTrailingSources } from "@/lib/rag/sources";
+import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
 import { randomUUID } from "node:crypto";

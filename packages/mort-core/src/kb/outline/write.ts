@@ -1,50 +1,8 @@
-import { env } from "./env.js";
+import { env } from "../../env";
+import { BASE, rpc, type OutlineCollection } from "./client";
+import { getDocument, listCollections } from "./read";
 
-/**
- * Minimal Outline API client for ingestion: list collections, create/update
- * documents, and upload attachments.
- */
-
-const BASE = env.OUTLINE_URL.replace(/\/$/, "");
-
-async function rpc<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}/api/${path}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OUTLINE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    // Name the doc — "documents.update failed (403)" alone is undebuggable.
-    const ref = (body.id ?? body.documentId) as string | undefined;
-    // Outline answers 403 for "you may not" AND for "it isn't there" (it won't
-    // confirm a doc exists to someone who can't see it), so say both.
-    const hint =
-      res.status === 403
-        ? " — the Mort bot user either lacks write access to that document's collection, or the document no longer exists (Outline returns 403, not 404, for both)"
-        : "";
-    throw new Error(
-      `Outline ${path} failed (${res.status})${ref ? ` for doc ${ref}` : ""}${hint}: ${text.slice(0, 300)}`,
-    );
-  }
-  const json = (await res.json()) as { data?: T };
-  return json.data as T;
-}
-
-export type Collection = { id: string; name: string };
-
-export async function listCollections(): Promise<Collection[]> {
-  const out: Collection[] = [];
-  for (let offset = 0; ; offset += 100) {
-    const page = await rpc<Collection[]>("collections.list", { limit: 100, offset });
-    out.push(...(page ?? []).map((c) => ({ id: c.id, name: c.name })));
-    if (!page || page.length < 100) break;
-  }
-  return out;
-}
+export type Collection = OutlineCollection;
 
 export async function createCollection(name: string): Promise<Collection> {
   const c = await rpc<Collection>("collections.create", { name });
@@ -79,35 +37,6 @@ export async function updateDocument(input: {
 }): Promise<OutlineDoc> {
   const d = await rpc<{ id: string; url: string; title: string; revision?: number }>("documents.update", input);
   return { id: d.id, url: `${BASE}${d.url}`, title: d.title, revision: d.revision };
-}
-
-/** Full current state of a doc — text + who last touched it (curated-doc detection). */
-export type OutlineDocInfo = {
-  id: string;
-  title: string;
-  text: string;
-  revision: number | null;
-  updatedById: string | null;
-  collectionId: string | null;
-};
-
-export async function getDocument(id: string): Promise<OutlineDocInfo> {
-  const d = await rpc<{
-    id: string;
-    title: string;
-    text: string;
-    revision?: number;
-    updatedBy?: { id?: string } | null;
-    collectionId?: string | null;
-  }>("documents.info", { id });
-  return {
-    id: d.id,
-    title: d.title,
-    text: d.text ?? "",
-    revision: d.revision ?? null,
-    updatedById: d.updatedBy?.id ?? null,
-    collectionId: d.collectionId ?? null,
-  };
 }
 
 /** Permanently delete a document (used only for review-approved removals + test cleanup). */

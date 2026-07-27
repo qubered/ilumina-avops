@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyMetadata, parseMetadataBlock } from "./metadata";
+import { emptyMetadata, parseMetadataBlock } from "@mort/core/kb/metadata";
 
 describe("parseMetadataBlock", () => {
   it("parses Zone/System/Type lines and strips them from the body", () => {
