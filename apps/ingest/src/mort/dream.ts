@@ -1,5 +1,5 @@
 import { generateObject } from "ai";
-import { MORT_AUTHORING_PREAMBLE } from "./identity.js";
+import { MORT_AUTHORING_PREAMBLE } from "@mort/core/identity";
 import { getModel, modelLabel } from "./model.js";
 import { dreamSchema, type DreamInput, type DreamProposal } from "./proposal.js";
 import { withRateLimitRetry } from "../ratelimit.js";

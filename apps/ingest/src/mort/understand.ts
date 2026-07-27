@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { MORT_AUTHORING_PREAMBLE } from "./identity.js";
+import { MORT_AUTHORING_PREAMBLE } from "@mort/core/identity";
 import { getModel, modelLabel } from "./model.js";
 import { withRateLimitRetry } from "../ratelimit.js";
 import type { FileRole } from "./types.js";

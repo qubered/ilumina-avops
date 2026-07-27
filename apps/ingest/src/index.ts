@@ -31,7 +31,7 @@ import {
   searchMemory,
   tombstoneSource,
 } from "./mort/memory.js";
-import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "./mort/identity.js";
+import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "@mort/core/identity";
 import { executeReview } from "./mort/execute.js";
 import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
 import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";

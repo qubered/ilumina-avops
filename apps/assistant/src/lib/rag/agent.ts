@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { getMortIdentity, listCurrentFacts, searchMortMemory } from "../mort-review";
+import { MORT_CHAT_VOICE, MORT_PERSONA } from "@mort/core/identity";
+import { listCurrentFacts, searchMortMemory } from "../mort-review";
 import { embedQuery } from "./embeddings";
 import { searchEvents } from "./events-store";
 import { searchKb } from "./store";
@@ -169,26 +170,18 @@ export const agentTools = {
 };
 
 /**
- * Mort's voice, layered over the answering rules. The persona is fetched from
- * the ingest (its canonical identity module) and cached for the process; if it's
- * unreachable the assistant simply answers in the neutral prompt — correct, just
- * without the character.
+ * Mort's voice, layered over the answering rules. The persona comes straight
+ * from the shared identity module — no network round trip, no cache, no
+ * unreachable-fallback needed.
  */
-let personaCache: { persona: string; chatVoice: string } | null = null;
-
 export async function buildSystemPrompt(): Promise<string> {
-  if (personaCache === null) {
-    const identity = await getMortIdentity();
-    personaCache = { persona: identity?.persona ?? "", chatVoice: identity?.chatVoice ?? "" };
-  }
-  if (!personaCache.persona) return SYSTEM_PROMPT;
   return [
-    personaCache.persona,
+    MORT_PERSONA,
     // Who he is, then how he talks. The voice is chat-only — the ingest agent
     // that writes the KB never gets it, because a procedure page in that
     // register would be worse documentation and would outlive every
     // conversation it was charming in.
-    personaCache.chatVoice,
+    MORT_CHAT_VOICE,
     `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
   ]
