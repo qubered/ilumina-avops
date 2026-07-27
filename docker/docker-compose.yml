@@ -11,7 +11,7 @@ services:
       AVOPS_DB_PASSWORD: ${AVOPS_DB_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U outline"]
       interval: 10s
@@ -222,7 +222,7 @@ services:
       APP_URL: ${APP_URL}
       NGINX_ENVSUBST_FILTER: APP_URL
     volumes:
-      - ./docker/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     restart: unless-stopped
 
   # Public access via Cloudflare Tunnel (outbound-only; nothing listens on

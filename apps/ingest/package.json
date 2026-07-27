@@ -1,5 +1,5 @@
 {
-  "name": "ilumina-ingest",
+  "name": "ingest",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,6 +16,7 @@
     "@ai-sdk/anthropic": "^4.0.14",
     "@ai-sdk/openai": "^4.0.13",
     "@hono/node-server": "^2.0.8",
+    "@mort/core": "workspace:*",
     "ai": "^7.0.26",
     "hono": "^4.12.30",
     "mammoth": "^1.12.0",

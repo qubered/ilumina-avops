@@ -1,5 +1,5 @@
 {
-  "name": "avops-assistant",
+  "name": "assistant",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
@@ -17,6 +18,7 @@
     "@ai-sdk/anthropic": "^4.0.8",
     "@ai-sdk/openai": "^4.0.8",
     "@ai-sdk/react": "^4.0.16",
+    "@mort/core": "workspace:*",
     "@qdrant/js-client-rest": "^1.18.0",
     "ai": "^7.0.15",
     "better-auth": "^1.6.23",
