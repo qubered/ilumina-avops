@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { getDocument, updateDocument } from "../outline.js";
-import { withDocLock } from "./lock.js";
-import { getDocState, recordDocState } from "./memory.js";
+import { withDocLock } from "@mort/core/memory/lock";
+import { getDocState, recordDocState } from "@mort/core/memory";
 import { isMalformedRegion, spliceMortRegion } from "./region.js";
 
 /**

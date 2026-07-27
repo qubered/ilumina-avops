@@ -2,7 +2,7 @@ import { env } from "../env.js";
 import { extract } from "../extract.js";
 import { getSelfUserId } from "../outline.js";
 import { classifyRole } from "./classify.js";
-import { getEffectiveMode, getEffectiveThreshold } from "./config.js";
+import { getEffectiveMode, getEffectiveThreshold } from "@mort/core/memory/config";
 import { buildTurnDeps } from "./deps.js";
 import { dream, dreamDedupeKey, validateProposals } from "./dream.js";
 import { syncEventSheet } from "./events.js";
@@ -15,7 +15,7 @@ import {
   reapStuckJobs,
   tokensToday,
   type MortJob,
-} from "./jobs.js";
+} from "@mort/core/memory/jobs";
 import {
   appendJournal,
   deleteEventsByHash,
@@ -31,7 +31,7 @@ import {
   listUnfiledArtifacts,
   saveBlob,
   upsertSource,
-} from "./memory.js";
+} from "@mort/core/memory";
 import { runMortTurn, type TurnDeps, type TurnOutcome } from "./turn.js";
 
 /**

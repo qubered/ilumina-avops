@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { executeReview } from "./execute.js";
-import type { ReviewRow } from "./memory.js";
+import type { ReviewRow } from "@mort/core/memory";
 import type { TurnDeps } from "./turn.js";
 
 function row(over: Partial<ReviewRow>): ReviewRow {

@@ -67,7 +67,10 @@ export type TurnDeps = GatherDeps & {
   }) => Promise<boolean>;
   journal: (entry: {
     sourceId: string;
-    mortId?: string | null;
+    /** The doc this entry concerns — always an Outline document id here (the
+     *  turn only ever has createDoc's / targetDocId's Outline id on hand, never
+     *  a real mort_id — see mort-core's mort_journal.outline_document_id). */
+    outlineDocumentId?: string | null;
     action: string;
     rationale?: string;
     confidence?: number;
@@ -215,7 +218,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
         regionBody,
         sourceId: file.sourceId,
       });
-      await deps.journal({ ...base, mortId: docId, action: "create" });
+      await deps.journal({ ...base, outlineDocumentId: docId, action: "create" });
       return { role, decided: "CREATE", executed: "created", docId, understanding };
     }
     case "UPDATE_ADDITIVE": {
@@ -230,7 +233,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
         return { role, decided: "UPDATE_ADDITIVE", executed: "review", understanding };
       }
       await deps.updateRegion(decision.targetDocId, regionBody);
-      await deps.journal({ ...base, mortId: decision.targetDocId, action: "update" });
+      await deps.journal({ ...base, outlineDocumentId: decision.targetDocId, action: "update" });
       return { role, decided: "UPDATE_ADDITIVE", executed: "updated", docId: decision.targetDocId, understanding };
     }
     case "ATTACH": {
@@ -238,7 +241,7 @@ export async function runMortTurn(file: TurnFile, cfg: TurnConfig, deps: TurnDep
       // has stored the bytes so approval can attach later).
       if (decision.targetDocId && deps.attachFile) {
         await deps.attachFile(decision.targetDocId, file.sourceId);
-        await deps.journal({ ...base, mortId: decision.targetDocId, action: "attach" });
+        await deps.journal({ ...base, outlineDocumentId: decision.targetDocId, action: "attach" });
         return { role, decided: "ATTACH", executed: "attached", docId: decision.targetDocId, understanding };
       }
       await deps.enqueueReview({

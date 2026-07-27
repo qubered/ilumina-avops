@@ -1,4 +1,4 @@
-import { pool } from "./db.js";
+import { pool } from "./db";
 
 /**
  * Mort's memory model (v1). Created on boot, idempotently. Splits SOURCE
@@ -6,7 +6,7 @@ import { pool } from "./db.js";
  * between them — so a renamed/deleted file touches only its own relation, never
  * the semantic doc it fed. See MORT_PLAN.md §v1.2 / §v1.6.
  */
-export async function initMortSchema(): Promise<void> {
+export async function ensureMortSchema(): Promise<void> {
   await pool.query(`
     -- Corpus map: every source file Mort knows about. source_id = watcher rel path.
     -- The library: every file Mort has been given, what he understood it to be,
@@ -51,20 +51,25 @@ export async function initMortSchema(): Promise<void> {
       PRIMARY KEY (source_id, mort_id, relation)
     );
 
-    -- Decision journal (what Mort did + why + what it cost).
+    -- Decision journal (what Mort did + why + what it cost). mort_id and
+    -- outline_document_id are separate columns (a journal entry names EITHER
+    -- a real mort_id or an Outline document id, never both) — see the
+    -- backfill below for the historical rows that conflated the two.
     CREATE TABLE IF NOT EXISTS mort_journal (
-      id         bigserial PRIMARY KEY,
-      ts         timestamptz NOT NULL DEFAULT now(),
-      source_id  text,
-      mort_id    text,
-      action     text NOT NULL,
-      rationale  text,
+      id                   bigserial PRIMARY KEY,
+      ts                   timestamptz NOT NULL DEFAULT now(),
+      source_id            text,
+      mort_id              text,
+      outline_document_id  text,
+      action               text NOT NULL,
+      rationale            text,
       confidence real,
       model      text,
       tokens     integer,
       cost_usd   numeric(10,4),
       conflicts  jsonb
     );
+    ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS outline_document_id text;
 
     -- Per-doc write state: curated-doc detection + revision CAS.
     CREATE TABLE IF NOT EXISTS mort_doc_state (
@@ -179,6 +184,7 @@ export async function initMortSchema(): Promise<void> {
   `);
 
   await backfillSemanticRegistryKeys();
+  await backfillJournalOutlineIds();
 }
 
 /**
@@ -207,5 +213,33 @@ async function backfillSemanticRegistryKeys(): Promise<void> {
       "[mort] registry-key backfill skipped — two docs likely share one semantic key now; merge the duplicates manually:",
       err,
     );
+  }
+}
+
+/**
+ * v2 migration: `mort_journal.mort_id` was never consistently a mort_id — every
+ * call site that set it actually passed an Outline document id (createDoc's
+ * return value, or decision.targetDocId, both Outline ids). Move those
+ * historical values into the new outline_document_id column instead of
+ * leaving readers to guess with an ambiguous OR-join.
+ *
+ * Only touches rows that are UNAMBIGUOUSLY the outline-id case: mort_id
+ * matches some doc's outline_document_id, and does NOT also happen to match a
+ * real mort_id (collisions are astronomically unlikely — mort_id is a
+ * slug+hash, outline_document_id is a UUID — but left alone and logged rather
+ * than guessed at). Idempotent: already-migrated rows have mort_id NULL and
+ * no longer match the WHERE clause.
+ */
+async function backfillJournalOutlineIds(): Promise<void> {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE mort_journal j SET outline_document_id = j.mort_id, mort_id = NULL
+         FROM mort_docs d
+        WHERE d.outline_document_id = j.mort_id
+          AND NOT EXISTS (SELECT 1 FROM mort_docs d2 WHERE d2.mort_id = j.mort_id)`,
+    );
+    if (rowCount) console.log(`[mort] migrated ${rowCount} journal row(s) from mort_id to outline_document_id`);
+  } catch (err) {
+    console.warn("[mort] journal outline-id backfill skipped:", err);
   }
 }

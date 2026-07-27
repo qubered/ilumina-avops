@@ -1,5 +1,5 @@
-import { env } from "../env.js";
-import { getSetting, setSetting } from "./memory.js";
+import { env } from "../env";
+import { getSetting, setSetting } from "./index";
 
 /**
  * Effective Mort authoring mode = the runtime setting (admin UI) if set,

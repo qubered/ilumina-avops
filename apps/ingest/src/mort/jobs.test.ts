@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAX_ATTEMPTS, backoffMinutes } from "./retry.js";
+import { MAX_ATTEMPTS, backoffMinutes } from "@mort/core/memory/retry";
 
 test("backoff grows exponentially and is capped", () => {
   assert.equal(backoffMinutes(1), 1);

@@ -29,7 +29,7 @@ import {
   listRelatedSources,
   recordDocState,
   registryKey,
-} from "./memory.js";
+} from "@mort/core/memory";
 import { appendToFilesSection, extractMortRegion, spliceMortRegion } from "./region.js";
 import { metaField, slugify } from "./textutil.js";
 import type { TurnDeps } from "./turn.js";
@@ -201,7 +201,7 @@ export function buildTurnDeps(selfUserId: string | null): TurnDeps {
     journal: (e) =>
       appendJournal({
         sourceId: e.sourceId,
-        mortId: e.mortId,
+        outlineDocumentId: e.outlineDocumentId,
         action: e.action,
         rationale: e.rationale,
         confidence: e.confidence,

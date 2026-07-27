@@ -1,5 +1,5 @@
 import pg from "pg";
-import { env } from "../env.js";
+import { env } from "../env";
 
 /**
  * Shared Postgres pool for Mort's memory tables. Same database the assistant

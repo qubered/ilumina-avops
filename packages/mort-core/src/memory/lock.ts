@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { pool } from "./db.js";
+import { pool } from "./db";
 
 /**
  * Per-key Postgres advisory lock. Serializes Mort's writes to the same target

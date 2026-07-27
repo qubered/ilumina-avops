@@ -1,7 +1,7 @@
-import { pool } from "./db.js";
-import type { EventRow } from "./events.js";
+import { pool } from "./db";
 import type {
   DocEntry,
+  EventRow,
   FileRole,
   LibraryEntry,
   MortDoc,
@@ -9,7 +9,7 @@ import type {
   MortSource,
   RelationKind,
   ReviewItem,
-} from "./types.js";
+} from "./types";
 
 /**
  * Repository over Mort's memory tables. Thin, typed wrappers — no business
@@ -253,7 +253,10 @@ export async function deleteSourceRelations(sourceId: string): Promise<void> {
 
 export async function appendJournal(entry: {
   sourceId?: string | null;
+  /** A real mort_id (Mort's canonical slug) — NOT an Outline document id, see outlineDocumentId. */
   mortId?: string | null;
+  /** An Outline document id — what most call sites actually have at journal time. */
+  outlineDocumentId?: string | null;
   action: string;
   rationale?: string | null;
   confidence?: number | null;
@@ -263,11 +266,12 @@ export async function appendJournal(entry: {
   conflicts?: unknown;
 }): Promise<void> {
   await pool.query(
-    `INSERT INTO mort_journal (source_id, mort_id, action, rationale, confidence, model, tokens, cost_usd, conflicts)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
       entry.sourceId ?? null,
       entry.mortId ?? null,
+      entry.outlineDocumentId ?? null,
       entry.action,
       entry.rationale ?? null,
       entry.confidence ?? null,
@@ -416,18 +420,18 @@ export type ActivityRow = {
 /**
  * What Mort has been doing, newest first — the journal, made readable.
  *
- * The join is on EITHER id because `mort_journal.mort_id` is not consistently a
- * mort_id: the turn journals whatever `createDoc`/`targetDocId` gave it, which is
- * an Outline document id. Rather than migrate historical rows, accept both — the
- * table is small and the feed is capped.
+ * A journal row names EITHER a real mort_id OR an Outline document id (never
+ * both, never ambiguously) — see the schema's backfillJournalOutlineIds() for
+ * the historical-rows migration. Two clean equalities, not an OR across id
+ * spaces.
  */
 export async function recentActivity(limit = 50): Promise<ActivityRow[]> {
   const { rows } = await pool.query(
     `SELECT j.ts, j.source_id, j.action, j.rationale, j.confidence, j.tokens, j.model,
-            d.title AS doc_title, d.outline_document_id
+            d.title AS doc_title, COALESCE(j.outline_document_id, d.outline_document_id) AS outline_document_id
        FROM mort_journal j
        LEFT JOIN mort_docs d
-         ON d.mort_id = j.mort_id OR d.outline_document_id = j.mort_id
+         ON d.mort_id = j.mort_id OR d.outline_document_id = j.outline_document_id
       ORDER BY j.ts DESC
       LIMIT $1`,
     [Math.min(Math.max(limit, 1), 200)],
@@ -687,9 +691,13 @@ export async function searchMemory(params: { q?: string; docId?: string; limit?:
   const limit = Math.min(Math.max(params.limit ?? 20, 1), 50);
 
   if (params.docId) {
+    // params.docId may be either a real mort_id or an Outline document id —
+    // callers don't always know which. mort_journal now records the two in
+    // separate columns (never ambiguously), so match either column directly
+    // instead of cross-referencing through mort_docs.
     const { rows: jr } = await pool.query(
       `SELECT ${JOURNAL_COLS} FROM mort_journal
-        WHERE mort_id = $1 OR mort_id IN (SELECT mort_id FROM mort_docs WHERE outline_document_id = $1)
+        WHERE mort_id = $1 OR outline_document_id = $1
         ORDER BY ts DESC LIMIT $2`,
       [params.docId, limit],
     );
@@ -710,7 +718,8 @@ export async function searchMemory(params: { q?: string; docId?: string; limit?:
     const like = `%${q}%`;
     const { rows: jr } = await pool.query(
       `SELECT ${JOURNAL_COLS} FROM mort_journal
-        WHERE source_id ILIKE $1 OR rationale ILIKE $1 OR action ILIKE $1 OR mort_id ILIKE $1
+        WHERE source_id ILIKE $1 OR rationale ILIKE $1 OR action ILIKE $1
+           OR mort_id ILIKE $1 OR outline_document_id ILIKE $1
         ORDER BY ts DESC LIMIT $2`,
       [like, limit],
     );

@@ -1,5 +1,5 @@
-import { pool } from "./db.js";
-import { MAX_ATTEMPTS, backoffMinutes } from "./retry.js";
+import { pool } from "./db";
+import { MAX_ATTEMPTS, backoffMinutes } from "./retry";
 
 export { MAX_ATTEMPTS, backoffMinutes };
 

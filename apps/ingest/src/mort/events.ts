@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import * as XLSX from "xlsx";
+import type { EventRow } from "@mort/core/memory/types";
 
 /**
  * Event-log ingestion (MORT_PLAN R1). A designated actions spreadsheet is
@@ -9,15 +10,7 @@ import * as XLSX from "xlsx";
  * insert, rows gone from the sheet are purged.
  */
 
-export type EventRow = {
-  rowHash: string;
-  event: string | null;
-  occurredOn: string | null; // ISO yyyy-mm-dd
-  zone: string[];
-  system: string[];
-  entities: string[];
-  actionText: string;
-};
+export type { EventRow };
 
 // Column header synonyms — matched case-insensitively, exact then substring.
 const COLS = {

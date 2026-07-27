@@ -1,4 +1,4 @@
-import type { ReviewRow } from "./memory.js";
+import type { ReviewRow } from "@mort/core/memory";
 import type { TurnDeps } from "./turn.js";
 
 /**

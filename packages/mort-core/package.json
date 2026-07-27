@@ -6,7 +6,15 @@
   "exports": {
     "./identity": "./src/identity/index.ts",
     "./model/chat": "./src/model/chat.ts",
-    "./model/ingest": "./src/model/ingest.ts"
+    "./model/ingest": "./src/model/ingest.ts",
+    "./memory": "./src/memory/index.ts",
+    "./memory/types": "./src/memory/types.ts",
+    "./memory/db": "./src/memory/db.ts",
+    "./memory/schema": "./src/memory/schema.ts",
+    "./memory/config": "./src/memory/config.ts",
+    "./memory/lock": "./src/memory/lock.ts",
+    "./memory/jobs": "./src/memory/jobs.ts",
+    "./memory/retry": "./src/memory/retry.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

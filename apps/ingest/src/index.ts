@@ -14,7 +14,7 @@ import {
 } from "./outline.js";
 import { getImport, hashContent, initStore, upsertImport } from "./store.js";
 import type { MiddlewareHandler } from "hono";
-import { initMortSchema } from "./mort/schema.js";
+import { ensureMortSchema } from "@mort/core/memory/schema";
 import {
   appendJournal,
   enqueueReview,
@@ -30,12 +30,12 @@ import {
   retireFact,
   searchMemory,
   tombstoneSource,
-} from "./mort/memory.js";
+} from "@mort/core/memory";
 import { MORT_CHAT_VOICE, MORT_PERSONA, SAFETY_RULES, SOURCE_OF_TRUTH, VENUE_SCOPE } from "@mort/core/identity";
 import { executeReview } from "./mort/execute.js";
 import { getDeps, initWorker, kickWorker, runDream } from "./mort/worker.js";
-import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "./mort/jobs.js";
-import { getEffectiveMode, getEffectiveThreshold, setMode } from "./mort/config.js";
+import { enqueueJob, listActiveJobs, listDeadJobs, queueStats, reviveJob, tokensToday } from "@mort/core/memory/jobs";
+import { getEffectiveMode, getEffectiveThreshold, setMode } from "@mort/core/memory/config";
 
 const bodySchema = z.object({
   fileName: z.string().min(1),
@@ -247,7 +247,7 @@ app.post("/review/decision", async (c) => {
   try {
     const result = await executeReview(item, await getDeps());
     await resolveReview(id, "approved", decidedBy);
-    await appendJournal({ sourceId: item.source_id, mortId: result.docId, action: `approved:${item.action}`, rationale: `review ${id}` });
+    await appendJournal({ sourceId: item.source_id, outlineDocumentId: result.docId, action: `approved:${item.action}`, rationale: `review ${id}` });
     return c.json({ id, status: "approved", ...result });
   } catch (err) {
     console.error(`[review] execute ${id} failed:`, err);
@@ -463,7 +463,7 @@ function buildBody(
 }
 
 await initStore();
-await initMortSchema();
+await ensureMortSchema();
 const bootMode = await getEffectiveMode();
 if (bootMode !== "off") await initWorker();
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
