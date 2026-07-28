@@ -1,0 +1,262 @@
+# Full stack: Outline wiki + AV Ops assistant + shared Postgres + Redis +
+# Qdrant + nginx front proxy (brief §10). Copy .env.example → .env first.
+
+services:
+  outline-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: outline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: outline
+      AVOPS_DB_PASSWORD: ${AVOPS_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  outline-redis:
+    image: redis:7
+    restart: unless-stopped
+
+  outline:
+    image: outlinewiki/outline:latest
+    depends_on:
+      outline-postgres:
+        condition: service_healthy
+      outline-redis:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      URL: ${OUTLINE_URL}
+      PORT: "3000"
+      SECRET_KEY: ${OUTLINE_SECRET_KEY}
+      UTILS_SECRET: ${OUTLINE_UTILS_SECRET}
+      DATABASE_URL: postgres://outline:${POSTGRES_PASSWORD}@outline-postgres:5432/outline
+      PGSSLMODE: disable
+      REDIS_URL: redis://outline-redis:6379
+      FILE_STORAGE: local
+      FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data
+      # Max attachment/upload size in bytes. Default ~100 MB (up from
+      # Outline's low default). Note: uploads reach Outline through the
+      # Cloudflare tunnel, which caps request bodies at 100 MB on the free
+      # plan — that's the real ceiling regardless of this value.
+      FILE_STORAGE_UPLOAD_MAX_SIZE: ${OUTLINE_MAX_UPLOAD_SIZE:-104857600}
+      # --- SSO via the assistant app (it is the OIDC identity provider) ---
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_AUTH_URI: ${APP_URL}/api/auth/oauth2/authorize
+      OIDC_TOKEN_URI: ${APP_URL}/api/auth/oauth2/token
+      OIDC_USERINFO_URI: ${APP_URL}/api/auth/oauth2/userinfo
+      OIDC_USERNAME_CLAIM: email
+      OIDC_DISPLAY_NAME: AV Ops SSO
+      OIDC_SCOPES: openid profile email
+    volumes:
+      - outline-data:/var/lib/outline/data
+    restart: unless-stopped
+
+  # Local embeddings (default EMBEDDINGS_PROVIDER=ollama): free, private,
+  # no rate limits. ollama-init pulls the model once at startup.
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      # Keep the embedding model resident (~0.7GB): on CPU-only boxes the
+      # default 5-minute unload adds a cold-start delay to the first
+      # question after a quiet period.
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull"]
+    command: ["${EMBEDDINGS_MODEL:-nomic-embed-text}"]
+    restart: "no"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  assistant:
+    build:
+      context: ..
+      dockerfile: apps/assistant/Dockerfile
+    depends_on:
+      outline-postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://avops:${AVOPS_DB_PASSWORD}@outline-postgres:5432/avops
+      AUTH_SECRET: ${AUTH_SECRET}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      SIGNUP_KEY: ${SIGNUP_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_WEB_SEARCH: ${AI_WEB_SEARCH:-true}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.5}
+      CODEX_MODEL: ${CODEX_MODEL:-gpt-5.5}
+      CODEX_HOME: /codex-auth
+      CODEX_AUTO_REFRESH: ${CODEX_AUTO_REFRESH:-true}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-ollama}
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-nomic-embed-text}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-3-large}
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://outline-redis:6379/1
+      OUTLINE_URL: ${OUTLINE_URL}
+      OUTLINE_API_KEY: ${OUTLINE_API_KEY}
+      OUTLINE_WEBHOOK_SECRET: ${OUTLINE_WEBHOOK_SECRET}
+      APP_URL: ${APP_URL}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      # Mort authoring mode — the admin UI (mort-admin.ts) reads this as the
+      # env-level default when no mort_settings row exists yet. Same value as
+      # the ingest service's MORT_MODE below.
+      MORT_MODE: ${MORT_MODE:-off}
+      MORT_DAILY_TOKEN_CAP: ${MORT_DAILY_TOKEN_CAP:-0}
+    ports:
+      - "3001:3000"
+    # For AI_PROVIDER=codex the app reads /codex-auth/auth.json. Don't edit
+    # this tracked file — put the mount in docker-compose.override.yml
+    # (gitignored, auto-merged, survives `git reset --hard`):
+    #
+    #   services:
+    #     assistant:
+    #       volumes:
+    #         - ${HOME}/.codex:/codex-auth   # ${HOME}, NOT ~ — compose won't expand ~
+    #
+    # Read-write (no :ro): OpenAI refresh tokens are single-use, so the app
+    # persists rotated tokens back to auth.json. Give the server its OWN
+    # `codex login` rather than copying a machine you still use codex on —
+    # a shared refresh token breaks whichever device refreshes second.
+    restart: unless-stopped
+
+  # SharePoint → Outline ingestion service. Power Automate POSTs base64 file
+  # contents to it; it AI-normalises each into a KB article (with attachments)
+  # and publishes into Outline, where the assistant's webhook indexes it.
+  # Reach it via the tunnel (ingest.<domain> → http://ingest:8080) or keep it
+  # internal-only and point Power Automate at a tunnel hostname you add.
+  ingest:
+    build:
+      context: ..
+      dockerfile: apps/ingest/Dockerfile
+    depends_on:
+      outline-postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      INGEST_API_KEY: ${INGEST_API_KEY}
+      OUTLINE_URL: ${OUTLINE_URL}
+      OUTLINE_API_KEY: ${OUTLINE_API_KEY}
+      DATABASE_URL: postgres://avops:${AVOPS_DB_PASSWORD}@outline-postgres:5432/avops
+      # Ingestion is a harder task than chat — default to a capable model,
+      # independent of the assistant's chat model.
+      INGEST_AI_PROVIDER: ${INGEST_AI_PROVIDER:-openrouter}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Mort's decision is structured output over a rich schema. Free/small models
+      # fail it outright ("No object generated: could not parse the response") or
+      # return nonsense — invented doc ids, SOPs marked SKIP. Use a capable model;
+      # this is the single biggest quality lever in the whole pipeline.
+      OPENROUTER_MODEL: ${INGEST_MODEL:-anthropic/claude-sonnet-4.5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${INGEST_MODEL:-gpt-4o}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      INGEST_DEFAULT_COLLECTION: ${INGEST_DEFAULT_COLLECTION:-Imported}
+      APP_URL: ${APP_URL}
+      # Mort now calls the KB store directly (single mort-core, no more HTTP
+      # boundary to the assistant) — it needs its own Qdrant + embeddings
+      # config, same values as the assistant's.
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-ollama}
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-nomic-embed-text}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-3-large}
+      # Mort authoring mode: off (legacy) | shadow (propose only) | live.
+      MORT_MODE: ${MORT_MODE:-off}
+      MORT_CONFIDENCE_THRESHOLD: ${MORT_CONFIDENCE_THRESHOLD:-0.6}
+      # Ceiling on a day's model spend. 0 = unlimited, which is the wrong default
+      # for an autonomous live Mort: R7 made a turn two model calls and a page
+      # write re-check its siblings, so a bulk ingest can cost several times what
+      # the file count suggests. Set it.
+      MORT_DAILY_TOKEN_CAP: ${MORT_DAILY_TOKEN_CAP:-0}
+      # How often Mort looks over the whole corpus (R7). 0 = never.
+      MORT_DREAM_INTERVAL_HOURS: ${MORT_DREAM_INTERVAL_HOURS:-24}
+    restart: unless-stopped
+
+  # Widget-injection layer only: sub_filter adds the chat bubble script to
+  # every Outline page. No published ports and no TLS — the Cloudflare
+  # tunnel terminates TLS at the edge and reaches this over the compose
+  # network (ingress: kb host → http://nginx:80).
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - outline
+      - assistant
+    environment:
+      # ${APP_URL} in the template becomes the widget script origin.
+      # The filter keeps envsubst from touching nginx's own $variables.
+      APP_URL: ${APP_URL}
+      NGINX_ENVSUBST_FILTER: APP_URL
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    restart: unless-stopped
+
+  # Public access via Cloudflare Tunnel (outbound-only; nothing listens on
+  # the host). Create the tunnel in Zero Trust → Networks → Tunnels, add
+  # public hostnames:
+  #   kb.venue.example        → http://nginx:80     (Outline + widget injection)
+  #   assistant.venue.example → http://assistant:3000
+  # and put its token in .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+      - assistant
+    restart: unless-stopped
+
+volumes:
+  ollama-data:
+  postgres-data:
+  outline-data:
+  qdrant-data:

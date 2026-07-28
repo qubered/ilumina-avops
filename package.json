@@ -1,0 +1,14 @@
+{
+  "name": "ilumina-avops",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.5.2",
+  "scripts": {
+    "dev:assistant": "pnpm --filter assistant dev",
+    "dev:ingest": "pnpm --filter ingest dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm --filter assistant lint"
+  }
+}

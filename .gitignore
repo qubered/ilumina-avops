@@ -1,8 +1,9 @@
 # secrets & local-only config — never commit
-avops-assistant/.env
-avops-assistant/docker-compose.override.yml
-avops-assistant/docker/dev-outline-secrets.env
-avops-assistant/docker/orbstack-root-ca.pem
+apps/assistant/.env
+apps/ingest/.env
+docker/docker-compose.override.yml
+docker/dev-outline-secrets.env
+docker/orbstack-root-ca.pem
 
 # dependencies & build output
 node_modules/

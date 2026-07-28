@@ -1,0 +1,56 @@
+{
+  "name": "@mort/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./env": "./src/env.ts",
+    "./identity": "./src/identity/index.ts",
+    "./model/chat": "./src/model/chat.ts",
+    "./model/ingest": "./src/model/ingest.ts",
+    "./memory": "./src/memory/index.ts",
+    "./memory/types": "./src/memory/types.ts",
+    "./memory/db": "./src/memory/db.ts",
+    "./memory/schema": "./src/memory/schema.ts",
+    "./memory/config": "./src/memory/config.ts",
+    "./memory/lock": "./src/memory/lock.ts",
+    "./memory/jobs": "./src/memory/jobs.ts",
+    "./memory/retry": "./src/memory/retry.ts",
+    "./kb/chunker": "./src/kb/chunker.ts",
+    "./kb/embeddings": "./src/kb/embeddings.ts",
+    "./kb/metadata": "./src/kb/metadata.ts",
+    "./kb/store": "./src/kb/store.ts",
+    "./kb/events-store": "./src/kb/events-store.ts",
+    "./kb/attachments": "./src/kb/attachments.ts",
+    "./kb/sources": "./src/kb/sources.ts",
+    "./kb/region": "./src/kb/region.ts",
+    "./kb/writer": "./src/kb/writer.ts",
+    "./kb/textutil": "./src/kb/textutil.ts",
+    "./kb/outline": "./src/kb/outline/index.ts",
+    "./kb/outline/read": "./src/kb/outline/read.ts",
+    "./kb/outline/write": "./src/kb/outline/write.ts",
+    "./kb/sync-lock": "./src/kb/sync-lock.ts",
+    "./kb/write-deps": "./src/kb/write-deps.ts",
+    "./kb/execute": "./src/kb/execute.ts",
+    "./agent": "./src/agent/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.14",
+    "@ai-sdk/openai": "^4.0.13",
+    "@qdrant/js-client-rest": "^1.18.0",
+    "ai": "^7.0.26",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/pg": "^8.20.0",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}
