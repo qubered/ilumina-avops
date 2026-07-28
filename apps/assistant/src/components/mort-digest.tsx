@@ -104,7 +104,13 @@ function entriesOf(digest: MortDigest, outlineUrl: string): Entry[] {
   }
 
   for (const l of digest.lessons) {
-    entries.push({ when: l.when, tone: "text-accent", label: "Learnt a lesson", text: l.lesson, detail: l.scope.join(", ") || null });
+    entries.push({
+      when: l.when,
+      tone: "text-accent",
+      label: l.status === "retired" ? "Dropped a lesson" : "Learnt a lesson",
+      text: l.lesson,
+      detail: l.scope.length > 0 ? l.scope.join(", ") : null,
+    });
   }
 
   return entries.sort((a, b) => b.when.localeCompare(a.when));
@@ -152,6 +158,7 @@ export function MortDigestPanel({ digest, outlineUrl }: { digest: MortDigest; ou
             {totals.pages} page{totals.pages === 1 ? "" : "s"} · {totals.facts} fact
             {totals.facts === 1 ? "" : "s"} · {totals.events} event{totals.events === 1 ? "" : "s"} ·{" "}
             {totals.reviews} proposal{totals.reviews === 1 ? "" : "s"} decided
+            {totals.lessons > 0 && ` · ${totals.lessons} lesson${totals.lessons === 1 ? "" : "s"}`}
           </p>
           <div className="mt-3 space-y-4">
             {days.map(([day, rows]) => (

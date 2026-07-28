@@ -311,6 +311,36 @@ export async function ensureMortSchema(): Promise<void> {
       updated_at     timestamptz NOT NULL DEFAULT now()
     );
 
+    -- What Mort has worked out about his own work (v2 P7, decision V2-4). One
+    -- imperative sentence per row, distilled by the nightly reflection from
+    -- signals that already exist: the decision journal, the review queue's
+    -- approve/reject verdicts, chat feedback, and turns a human corrected.
+    --
+    -- Two columns carry the philosophy. evidence is what makes a lesson
+    -- answerable rather than assertable — every row points back at the journal,
+    -- feedback or review rows that produced it, so "why do you think that?" has
+    -- an answer that isn't the model's word. status is why lessons can be
+    -- active immediately: transparent and reversible beats gated, the same
+    -- bargain confirm-then-live makes.
+    --
+    -- dedupe_key is UNIQUE across every status, deliberately. A retired lesson
+    -- is a decision a human made, and a reflection that re-derived the same
+    -- thought tomorrow and filed it as new would quietly overturn it.
+    CREATE TABLE IF NOT EXISTS mort_lessons (
+      id          uuid PRIMARY KEY,
+      ts          timestamptz NOT NULL DEFAULT now(),
+      lesson      text NOT NULL,                  -- one imperative sentence
+      detail      text,
+      scope       text[] NOT NULL DEFAULT '{}',   -- chat | ingest | zone/system tags
+      evidence    jsonb NOT NULL DEFAULT '[]'::jsonb,   -- [{kind:'journal'|'feedback'|'review', id}]
+      origin      text NOT NULL DEFAULT 'dream',  -- dream | human
+      status      text NOT NULL DEFAULT 'active', -- active | retired
+      dedupe_key  text NOT NULL UNIQUE,
+      retired_by  text,
+      retired_at  timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS mort_lessons_active ON mort_lessons (ts DESC) WHERE status = 'active';
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);
     CREATE INDEX IF NOT EXISTS mort_events_date ON mort_events (occurred_on);

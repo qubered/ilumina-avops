@@ -21,7 +21,17 @@ import {
 } from "./ingest-tools";
 import { dreamFinished, newDreamState } from "./dream-tools";
 import type { DreamInput, DreamProposal } from "./proposal";
-import { DREAM_INSTRUCTIONS, dreamPrompt, INGEST_INSTRUCTIONS, ingestPrompt } from "./authoring-prompt";
+import { newReflectState, reflectionFinished, type ReflectionInput } from "./reflection";
+import type { Lesson } from "../memory/lessons";
+import { buildLessonsSection } from "./lessons-prompt";
+import {
+  DREAM_INSTRUCTIONS,
+  dreamPrompt,
+  INGEST_INSTRUCTIONS,
+  ingestPrompt,
+  REFLECTION_INSTRUCTIONS,
+  reflectionPrompt,
+} from "./authoring-prompt";
 
 /**
  * One Mort turn (MORT_V2_PLAN I.2).
@@ -58,7 +68,9 @@ export type TurnEntry =
   /** A file turn (P6). The prompt is derived from the file, not supplied. */
   | { kind: "ingest"; file: IngestFile; deps: IngestDeps }
   /** The nightly look over the whole corpus (P6). */
-  | { kind: "dream"; digest: DreamInput };
+  | { kind: "dream"; digest: DreamInput }
+  /** The nightly look over Mort's own record — the dream's second phase (P7). */
+  | { kind: "reflect"; input: ReflectionInput };
 
 export type TurnContext = {
   channel: Channel;
@@ -135,20 +147,32 @@ const actingUser = (actor: TurnContext["actor"]): ActingUser | null => (actor ==
  * connected tools this turn.
  */
 async function systemFor(entry: TurnEntry, tools: ToolSet, ctx: TurnContext): Promise<string> {
-  if (entry.kind === "ingest") return `${MORT_AUTHORING_PREAMBLE}\n\n${INGEST_INSTRUCTIONS}`;
+  // Lessons sit between who Mort is and the rules he works under, on both
+  // channels that do real work (P7). The reflection itself gets none: a turn
+  // whose job is to judge its own lessons should not be reading them back as
+  // instructions, and it is handed the active list as DATA in its prompt
+  // instead, to dedupe against.
+  if (entry.kind === "ingest") {
+    return [MORT_AUTHORING_PREAMBLE, await buildLessonsSection("ingest"), INGEST_INSTRUCTIONS]
+      .filter(Boolean)
+      .join("\n\n");
+  }
   if (entry.kind === "dream") return `${MORT_AUTHORING_PREAMBLE}\n\n${DREAM_INSTRUCTIONS}`;
+  if (entry.kind === "reflect") return `${MORT_AUTHORING_PREAMBLE}\n\n${REFLECTION_INSTRUCTIONS}`;
   return buildSystemPrompt({
     canWriteKb: chatCanWriteKb(tools),
     hasMcpTools: chatHasMcpTools(tools),
     hasAdminTools: chatHasAdminTools(tools),
+    lessons: await buildLessonsSection("chat"),
     surface: ctx.surface,
   });
 }
 
-/** The turn's opening message: the file, or the digest of the whole corpus. */
+/** The turn's opening message: the file, the corpus digest, or the week's signals. */
 function promptFor(entry: TurnEntry): string {
   if (entry.kind === "ingest") return ingestPrompt(entry.file);
   if (entry.kind === "dream") return dreamPrompt(entry.digest);
+  if (entry.kind === "reflect") return reflectionPrompt(entry.input);
   return "";
 }
 
@@ -180,6 +204,7 @@ export async function prepareTurn(entry: TurnEntry, ctx: TurnContext): Promise<T
     // from inside the turn.
     ingest: entry.kind === "ingest" ? newIngestState(entry.file, entry.deps) : undefined,
     dream: entry.kind === "dream" ? newDreamState(entry.digest) : undefined,
+    reflect: entry.kind === "reflect" ? newReflectState(entry.input) : undefined,
   };
 
   const rail = spendRail({
@@ -262,6 +287,7 @@ export async function runTurn(entry: TurnEntry, ctx: TurnContext): Promise<TurnR
 function isDone(entry: TurnEntry, ctx: ToolContext): boolean {
   if (entry.kind === "ingest") return hasDecided(ctx);
   if (entry.kind === "dream") return dreamFinished(ctx);
+  if (entry.kind === "reflect") return reflectionFinished(ctx.reflect);
   return false;
 }
 
@@ -327,6 +353,41 @@ export async function runDreamTurn(
   const state = result.toolContext.dream;
   return {
     raised: state?.raised ?? [],
+    duplicates: state?.duplicates ?? 0,
+    tokens: result.tokens,
+    steps: result.steps,
+    blocked: result.blocked,
+  };
+}
+
+export type ReflectTurnResult = {
+  /** Filed this turn — active immediately, and in the next prompt. */
+  learned: Lesson[];
+  /** Conclusions Mort already held, or that a human has already retired. */
+  duplicates: number;
+  tokens: number;
+  steps: number;
+  blocked: string | null;
+};
+
+/**
+ * The dream's second phase: look at the record of what Mort did and how it
+ * landed, and write down what to do differently (P7).
+ *
+ * Runs on the `dream` channel, so it inherits that channel's whole trust model
+ * unchanged — no pen over the KB, no facts, no reach beyond Mort's systems —
+ * and adds exactly one capability: `note_lesson`, narrowed to this channel in
+ * the registry. Learning nothing is a normal outcome and produces an empty
+ * list, not a failure.
+ */
+export async function runReflectionTurn(
+  input: ReflectionInput,
+  ctx: Omit<TurnContext, "channel" | "actor"> & { actor?: TurnContext["actor"] } = {},
+): Promise<ReflectTurnResult> {
+  const result = await runTurn({ kind: "reflect", input }, { ...ctx, channel: "dream", actor: ctx.actor ?? "system" });
+  const state = result.toolContext.reflect;
+  return {
+    learned: state?.learned ?? [],
     duplicates: state?.duplicates ?? 0,
     tokens: result.tokens,
     steps: result.steps,

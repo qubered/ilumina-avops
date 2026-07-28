@@ -64,6 +64,7 @@ vi.mock("../agent/read-tools", () => ({
   mortMemoryTool: fake(),
   currentStateTool: fake(),
   changeDigestTool: fake(),
+  mortLessonsTool: fake(),
 }));
 // P8's operator tier. What each of them decides is admin-tools' own business;
 // here they only have to exist so the registry can put them on an admin's belt.
@@ -74,6 +75,9 @@ vi.mock("../agent/admin-tools", () => ({
   setModeTool: fake,
   ADMIN_RULES: "",
 }));
+// P7's reflection tools. Their own behaviour is covered in reflection.test.ts;
+// here they only have to be registrable without reaching Postgres.
+vi.mock("../agent/reflect-tools", () => ({ noteLessonTool: fake, finishReflectionTool: fake }));
 vi.mock("../agent/memory-tools", () => ({
   saveFactTool: fake,
   retireFactTool: fake,
@@ -97,6 +101,28 @@ const member: ActingUser = { id: "u2", email: "crew@qubered.com", role: "member"
 function ctx(over: Partial<ToolContext> = {}): ToolContext {
   return { channel: "chat", user: admin, conversationId: "conv-1", seen: new Set(), ...over };
 }
+
+/**
+ * The dream channel's two phases (P7). Which tools are on the belt depends on
+ * the per-turn state prepareTurn put there — a corpus turn has a digest, a
+ * reflection turn has signals — so a dream context has to say which it is.
+ */
+const dreamCtx = (phase: "corpus" | "reflect") =>
+  ctx({
+    channel: "dream",
+    user: null,
+    conversationId: null,
+    ...(phase === "corpus"
+      ? { dream: { digest: { library: [], docs: [] }, raised: [], duplicates: 0, done: false } }
+      : {
+          reflect: {
+            input: { signals: { days: 7, journal: [], reviews: [], feedback: [] }, existing: [] },
+            learned: [],
+            duplicates: 0,
+            done: false,
+          },
+        }),
+  });
 
 const call = async (tool: unknown, args: unknown = {}) =>
   (await (tool as { execute: (a: unknown, o: unknown) => Promise<unknown> }).execute(args, {})) as Record<
@@ -162,6 +188,7 @@ describe("belt assembly", () => {
         "log_event",
         "mcp_servers",
         "mcp_toggle",
+        "mort_lessons",
         "mort_memory",
         "mort_status",
         "propose_doc_edit",
@@ -200,6 +227,7 @@ describe("belt assembly", () => {
       "hold_file",
       "kb_get_doc",
       "kb_search",
+      "mort_lessons",
       "mort_memory",
       "note_understanding",
       "send_to_review",
@@ -221,7 +249,7 @@ describe("belt assembly", () => {
   it("gives the dream the read tools and one way to reach a human", async () => {
     // R7: a dream proposes, a human decides. raise_proposal is the whole of its
     // write:kb tier and finish_dream just ends the turn.
-    const belt = await buildBelt(ctx({ channel: "dream", user: null }));
+    const belt = await buildBelt(dreamCtx("corpus"));
     expect(Object.keys(belt)).toContain("raise_proposal");
     expect(Object.keys(belt)).toContain("finish_dream");
     for (const tool of [
@@ -235,6 +263,28 @@ describe("belt assembly", () => {
     ]) {
       expect(Object.keys(belt)).not.toContain(tool);
     }
+  });
+
+  it("gives the reflection one way to write a lesson and no way to write anything else", async () => {
+    // P7's acceptance shape. The dream channel carries write:memory now, and
+    // the ONLY tool on it is note_lesson: save_fact, retire_fact and log_event
+    // are narrowed to chat in the registry, because a fact needs a named human
+    // to approve it and there is nobody on this channel.
+    const belt = await buildBelt(dreamCtx("reflect"));
+    expect(Object.keys(belt)).toContain("note_lesson");
+    expect(Object.keys(belt)).toContain("finish_reflection");
+    expect(Object.keys(belt)).toContain("mort_lessons");
+    for (const tool of ["save_fact", "retire_fact", "log_event", "propose_doc_edit", "create_doc", "create_page"]) {
+      expect(Object.keys(belt)).not.toContain(tool);
+    }
+  });
+
+  it("keeps each dream phase's tools off the other phase's belt", async () => {
+    // A corpus turn has no signals and a reflection turn has no digest, so a
+    // tool from the other phase could only ever refuse itself — and a model
+    // offered a tool that always refuses will spend a step finding that out.
+    expect(Object.keys(await buildBelt(dreamCtx("corpus")))).not.toContain("note_lesson");
+    expect(Object.keys(await buildBelt(dreamCtx("reflect")))).not.toContain("raise_proposal");
   });
 
   it("drops the wiki tools entirely when chat writes are switched off", async () => {
@@ -256,7 +306,17 @@ describe("belt assembly", () => {
     // but a page diff has nowhere to render in a few hundred pixels — and
     // confirming a change nobody can see is not a confirmation.
     const belt = await buildBelt(ctx({ surface: "widget" }));
-    for (const tool of ["kb_search", "current_state", "change_digest", "save_fact", "log_event", "confirm_pending"]) {
+    for (const tool of [
+      "kb_search",
+      "current_state",
+      "change_digest",
+      // P7's visibility rule holds here too: a lesson changes how Mort behaves,
+      // so it must be readable wherever he is being talked to.
+      "mort_lessons",
+      "save_fact",
+      "log_event",
+      "confirm_pending",
+    ]) {
       expect(Object.keys(belt)).toContain(tool);
     }
     for (const tool of [

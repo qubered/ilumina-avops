@@ -66,12 +66,13 @@ export type DigestReview = {
   when: string;
 };
 
-/** A lesson the nightly reflection drew. Empty until P7 lands the table. */
+/** A lesson the nightly reflection drew (P7). */
 export type DigestLesson = {
   id: string;
   lesson: string;
   scope: string[];
   when: string;
+  status: string;
 };
 
 export type ChangeDigest = {
@@ -119,18 +120,14 @@ export async function changeDigest(opts: { days?: number; now?: Date } = {}): Pr
   const window = digestWindow(opts.days ?? 7, opts.now);
   const args = [window.since, window.until];
 
-  const [pages, facts, events, reviews, outstanding] = await Promise.all([
+  const [pages, facts, events, reviews, lessons, outstanding] = await Promise.all([
     digestPages(args),
     digestFacts(args),
     digestEvents(args),
     digestReviews(args),
+    digestLessons(args),
     digestOutstanding(),
   ]);
-
-  // P7 writes mort_lessons; until then the section is honestly empty rather
-  // than absent, so the renderer and the tool description don't have to change
-  // when it starts filling up.
-  const lessons: DigestLesson[] = [];
 
   return {
     window,
@@ -250,6 +247,31 @@ async function digestReviews(args: string[]): Promise<DigestReview[]> {
     status: r.status as "approved" | "rejected",
     by: (r.decided_by as string) ?? null,
     when: iso(r.decided_at),
+  }));
+}
+
+/**
+ * Lessons the nightly reflection drew in the window (P7).
+ *
+ * Retired ones are included and flagged rather than filtered out: a lesson
+ * dropped this week is exactly the sort of thing "what's changed?" is asking
+ * about, and hiding it would make the digest quieter than the truth.
+ */
+async function digestLessons(args: string[]): Promise<DigestLesson[]> {
+  const { rows } = await pool.query(
+    `SELECT id, lesson, scope, ts, status
+       FROM mort_lessons
+      WHERE ts >= $1::timestamptz AND ts < $2::timestamptz
+      ORDER BY ts DESC
+      LIMIT 50`,
+    args,
+  );
+  return rows.map((r) => ({
+    id: r.id as string,
+    lesson: r.lesson as string,
+    scope: (r.scope as string[]) ?? [],
+    when: iso(r.ts),
+    status: (r.status as string) ?? "active",
   }));
 }
 

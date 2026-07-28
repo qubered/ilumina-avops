@@ -9,6 +9,7 @@ import type { ActorRole, Channel, Surface } from "./types";
 import type { ToolSpec } from "./registry";
 import type { IngestTurnState } from "../agent/ingest-tools";
 import type { DreamTurnState } from "../agent/dream-tools";
+import type { ReflectTurnState } from "../agent/reflection";
 
 /**
  * The harness (MORT_V2_PLAN I.2, decision V2-5).
@@ -47,15 +48,17 @@ export type ToolContext = {
   /** Re-index hook for a page a confirmed card just wrote. */
   onWritten?: (docId: string) => Promise<void>;
   /**
-   * The machine channels' per-turn state (P6). Set by `prepareTurn` from the
-   * entry, never by a tool: `ingest` is the file being decided about and the
-   * decision reached so far, `dream` is the corpus digest and what's been
-   * raised. A chat turn has neither, and the tools that read them are narrowed
+   * The machine channels' per-turn state (P6, P7). Set by `prepareTurn` from
+   * the entry, never by a tool: `ingest` is the file being decided about and
+   * the decision reached so far, `dream` is the corpus digest and what's been
+   * raised, `reflect` is the window of outcome signals and what was learnt from
+   * it. A chat turn has none of them, and the tools that read them are narrowed
    * to their channel in the registry, so "the state is missing" is a bug rather
    * than a routine case.
    */
   ingest?: IngestTurnState;
   dream?: DreamTurnState;
+  reflect?: ReflectTurnState;
 };
 
 /** How an actor is named in the audit log. */
@@ -75,17 +78,22 @@ const roleOf = (ctx: ToolContext): ActorRole => ctx.user?.role ?? "member";
  * a future MCP merge, a test, a mistake — is still policed.
  */
 async function refusalReason(spec: ToolSpec, ctx: ToolContext): Promise<string | null> {
-  if (spec.channels && !spec.channels.includes(ctx.channel)) {
-    return `${spec.name} is not available on the ${ctx.channel} channel.`;
-  }
+  // Tier first, then the per-tool narrowing. Both refuse; the order decides
+  // which reason gets reported, and the tier is the more durable one — "this
+  // channel has no such tier at all" stays true whatever the registry does with
+  // one tool tomorrow, while the narrowing is a refinement on top of it.
   if (!isTierAllowed(spec.tier, ctx.channel, roleOf(ctx))) {
     return `${spec.name} is a ${spec.tier} tool and the ${ctx.channel} channel does not permit that${
       ctx.user ? ` for a ${roleOf(ctx)}` : ""
     }. Nothing was done.`;
   }
+  if (spec.channels && !spec.channels.includes(ctx.channel)) {
+    return `${spec.name} is not available on the ${ctx.channel} channel. Nothing was done.`;
+  }
+  // Then the surface (P8) — last of the three, because it is the narrowing a
+  // person can do something about. Written to be repeated: someone in the
+  // widget needs to hear "do this in the full app", not "you may not do this".
   if (!isTierOnSurface(spec.tier, ctx.surface)) {
-    // Written to be repeated: the person is in the widget and the answer they
-    // need is "do this in the full app", not "you may not do this".
     return `${spec.name} needs the full app — the compact panel can read and remember things, but not this. Tell them to open the app from the panel's corner link. Nothing was done.`;
   }
   if (spec.requiresUser && !ctx.user) {

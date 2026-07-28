@@ -34,6 +34,11 @@ import {
 } from "@mort/core/memory";
 import { chatWritesEnabled } from "@mort/core/tools/policy";
 import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob } from "@mort/core/memory/jobs";
+import {
+  listLessons as coreListLessons,
+  retireLesson as coreRetireLesson,
+  type Lesson,
+} from "@mort/core/memory/lessons";
 import { listRecentPendingActions, type PendingAction } from "@mort/core/memory/pending";
 
 /**
@@ -366,6 +371,47 @@ export async function retireFact(id: number, retiredBy: string): Promise<{ ok: b
     await appendJournal({
       action: "fact_retired",
       rationale: `fact ${id}`,
+      channel: "admin",
+      actor: retiredBy,
+    });
+  }
+  return { ok };
+}
+
+// --- Lessons (v2 P7) --------------------------------------------------------
+
+export type MortLesson = Lesson;
+
+/**
+ * What Mort has worked out about his own work — retired lessons included.
+ *
+ * The panel shows both because the retired ones are the record of a human
+ * disagreeing with him, and hiding those would make the list read as a set of
+ * conclusions nobody has ever pushed back on. Empty on failure.
+ */
+export async function listMortLessons(): Promise<MortLesson[]> {
+  try {
+    return await coreListLessons({ limit: 200 });
+  } catch (err) {
+    console.error("[mort-admin] listMortLessons failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Retire a lesson. It stops reaching the prompt on the very next turn.
+ *
+ * Journaled, like retiring a fact: a lesson changes how Mort behaves, so "who
+ * decided he should stop believing that" is provenance and comes from the
+ * session. The row is kept rather than deleted — that is what stops the next
+ * reflection re-deriving the same thought and filing it as new.
+ */
+export async function retireLesson(id: string, retiredBy: string): Promise<{ ok: boolean }> {
+  const ok = await coreRetireLesson(id, retiredBy);
+  if (ok) {
+    await appendJournal({
+      action: "lesson_retired",
+      rationale: `lesson ${id}`,
       channel: "admin",
       actor: retiredBy,
     });
