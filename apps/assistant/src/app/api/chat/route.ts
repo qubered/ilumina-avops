@@ -5,14 +5,17 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type Source } from "@/lib/db";
 import {
-  agentTools,
   buildSystemPrompt,
+  buildTurnTools,
   getChatStack,
   MAX_STEPS,
   systemPromptOptions,
   type KbSearchResult,
 } from "@mort/core/agent";
+import { chatWritesEnabled } from "@mort/core/tools/policy";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
+import { actingUser } from "@/lib/mort-actor";
+import { syncDocumentById } from "@/lib/rag/sync";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
 import { randomUUID } from "node:crypto";
@@ -137,12 +140,23 @@ export async function POST(req: Request) {
     content: userText,
   });
 
+  // Mort's write tools are built per turn and closed over THIS session's user,
+  // so nothing in the conversation can change who a write is attributed to.
+  // `onWritten` is the assistant's own re-index — core owns Outline and Qdrant,
+  // the assistant owns kb_documents, so the hook crosses that line explicitly.
+  const canWrite = await chatWritesEnabled();
+  const turnTools = await buildTurnTools({
+    user: actingUser(session),
+    conversationId,
+    onWritten: (docId) => syncDocumentById(docId),
+  });
+
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(await buildSystemPrompt()),
+      ...systemPromptOptions(await buildSystemPrompt({ canWrite })),
       messages: modelMessages,
-      tools: { ...agentTools, ...stack.providerTools },
+      tools: { ...turnTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);

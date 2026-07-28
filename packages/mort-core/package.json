@@ -16,6 +16,7 @@
     "./memory/lock": "./src/memory/lock.ts",
     "./memory/jobs": "./src/memory/jobs.ts",
     "./memory/retry": "./src/memory/retry.ts",
+    "./memory/pending": "./src/memory/pending.ts",
     "./kb/chunker": "./src/kb/chunker.ts",
     "./kb/embeddings": "./src/kb/embeddings.ts",
     "./kb/metadata": "./src/kb/metadata.ts",
@@ -32,7 +33,14 @@
     "./kb/sync-lock": "./src/kb/sync-lock.ts",
     "./kb/write-deps": "./src/kb/write-deps.ts",
     "./kb/execute": "./src/kb/execute.ts",
-    "./agent": "./src/agent/index.ts"
+    "./kb/diff": "./src/kb/diff.ts",
+    "./kb/mort-header": "./src/kb/mort-header.ts",
+    "./kb/chat-write": "./src/kb/chat-write.ts",
+    "./tools/policy": "./src/tools/policy.ts",
+    "./tools/kb-write": "./src/tools/kb-write.ts",
+    "./agent": "./src/agent/index.ts",
+    "./agent/gather": "./src/agent/gather.ts",
+    "./agent/dump": "./src/agent/dump.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

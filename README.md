@@ -1,6 +1,6 @@
 # ILUMINA AV Ops
 
-AI assistant for the ILUMINA venue AV crew — answers operational questions from the crew's Outline wiki with citations, doubles as the OIDC identity provider for Outline, and embeds into wiki pages as a chat widget. "Mort" is the same agent on both sides: chat and the SharePoint→Outline ingestion pipeline share one brain (`packages/mort-core`) — see `MORT_V2_PLAN.md`.
+AI assistant for the ILUMINA venue AV crew — answers operational questions from the crew's Outline wiki with citations — and fixes the wiki back, from the same conversation, behind a confirm-then-live card — doubles as the OIDC identity provider for Outline, and embeds into wiki pages as a chat widget. "Mort" is the same agent on both sides: chat and the SharePoint→Outline ingestion pipeline share one brain (`packages/mort-core`) — see `MORT_V2_PLAN.md`.
 
 This is a pnpm workspace — run `pnpm install` once at the repo root, not inside an individual app.
 

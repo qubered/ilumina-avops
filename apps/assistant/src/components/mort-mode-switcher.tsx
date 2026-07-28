@@ -15,15 +15,15 @@ export function MortModeSwitcher({ config }: { config: MortConfig }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function set(next: MortMode) {
-    if (next === config.mode || busy) return;
+  async function post(body: { mode?: MortMode; chatWrites?: boolean }) {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch("/api/admin/mort-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: next }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -50,7 +50,7 @@ export function MortModeSwitcher({ config }: { config: MortConfig }) {
             return (
               <button
                 key={m.key}
-                onClick={() => set(m.key)}
+                onClick={() => (m.key === config.mode ? undefined : post({ mode: m.key }))}
                 disabled={busy}
                 className={`px-3 py-1 text-xs transition-colors ${
                   active
@@ -70,6 +70,24 @@ export function MortModeSwitcher({ config }: { config: MortConfig }) {
       <p className="mt-1 text-[12px] text-text-3">
         Unsure decisions (confidence &lt; {config.threshold}) always go to review, and Mort only ever
         edits its own region — non-destructive in every mode.
+      </p>
+
+      <div className="mt-3 flex items-center gap-2 border-t border-divider pt-3">
+        <span className="text-[13px] font-medium text-text">Chat writes</span>
+        <button
+          onClick={() => post({ chatWrites: !config.chatWrites })}
+          disabled={busy}
+          className={`ml-auto rounded-md border border-divider px-3 py-1 text-xs transition-colors disabled:opacity-50 ${
+            config.chatWrites ? "bg-accent/15 font-semibold text-text" : "text-text-2 hover:text-text"
+          }`}
+        >
+          {config.chatWrites ? "Enabled" : "Frozen"}
+        </button>
+      </div>
+      <p className="mt-2 text-[12px] text-text-3">
+        Whether crew can change the wiki from a conversation (corrections, new pages, brain dumps).
+        Freezing this leaves questions and answers working exactly as they are. Shadow mode still turns
+        every chat change into a review proposal, admins included.
       </p>
       {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
     </div>

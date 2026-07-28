@@ -4,9 +4,14 @@ import { MORT_CHAT_VOICE, MORT_PERSONA } from "../identity";
 import { listCurrentFacts, searchMemory } from "../memory";
 import { embedQuery } from "../kb/embeddings";
 import { searchEvents } from "../kb/events-store";
+import { documentUrl, getDocumentOrNull } from "../kb/outline";
+import { extractMortRegion } from "../kb/region";
 import { searchKb } from "../kb/store";
+import { buildKbWriteTools, type ToolContext } from "../tools/kb-write";
+import { chatWritesEnabled } from "../tools/policy";
 
 export { getChatModel, getChatStack, systemPromptOptions } from "../model/chat";
+export type { ToolContext };
 
 /**
  * Agent definition kept importable/server-side so a later Slack bot phase can
@@ -69,9 +74,16 @@ Answering:
   source verbatim and tell the user to verify against the source page.
 - Keep answers tight — crew are usually mid-show or mid-bump-in.`;
 
-export const MAX_STEPS = 6;
+/**
+ * Bounded steps for a chat turn. Raised from 6 with v2/P3 (MORT_V2_PLAN §I.2):
+ * a brain dump is search → place → propose per topic, and at six steps Mort ran
+ * out of room mid-dump and stopped with half the cards shown.
+ */
+export const MAX_STEPS = 10;
 
 export type KbSearchResult = {
+  /** The Outline document id — the ONLY ids a write tool will act on. */
+  docId: string;
   breadcrumb: string;
   title: string;
   url: string;
@@ -79,35 +91,91 @@ export type KbSearchResult = {
   text: string;
 };
 
-export const kbSearchTool = tool({
-  description:
-    "Search the ILUMINA AV Ops knowledge base. Returns the most relevant KB chunks with their source page titles and URLs. Use focused queries; search multiple times for multi-part questions.",
-  inputSchema: z.object({
-    query: z.string().describe("A focused search query about AV operations at ILUMINA"),
-  }),
-  execute: async ({ query }): Promise<KbSearchResult[] | { error: string }> => {
-    try {
-      const vector = await embedQuery(query);
-      const hits = await searchKb(vector, 5);
-      return hits.map((h) => ({
-        breadcrumb: h.breadcrumb,
-        title: h.title,
-        url: h.url,
-        score: h.score,
-        text: h.text,
-      }));
-    } catch (err) {
-      // Return the failure as a tool result instead of throwing: the model
-      // can then tell the user the KB is unreachable rather than the whole
-      // stream dying (graceful degradation, brief §12).
-      console.error("[kb_search] failed:", err);
-      return {
-        error:
-          "Knowledge base search is unavailable right now (vector store or embedding service unreachable). Tell the user you cannot search the KB at the moment and to try again shortly — do not answer from memory.",
-      };
-    }
-  },
-});
+/**
+ * kb_search, bound to a turn so the doc ids it returns are remembered.
+ *
+ * That set is the invented-target guard (v1's "never act on an invented doc
+ * id", promoted into the tool layer in v2/P3): a write tool will only touch a
+ * page Mort actually found. Without it a model will cheerfully emit a
+ * plausible-looking id that either 403s or, far worse, lands on a real but
+ * wrong page.
+ */
+export function buildKbSearchTool(seen: Set<string>) {
+  return tool({
+    description:
+      "Search the ILUMINA AV Ops knowledge base. Returns the most relevant KB chunks with their document ids, source page titles and URLs. Use focused queries; search multiple times for multi-part questions.",
+    inputSchema: z.object({
+      query: z.string().describe("A focused search query about AV operations at ILUMINA"),
+    }),
+    execute: async ({ query }): Promise<KbSearchResult[] | { error: string }> => {
+      try {
+        const vector = await embedQuery(query);
+        const hits = await searchKb(vector, 5);
+        for (const h of hits) seen.add(h.docId);
+        return hits.map((h) => ({
+          docId: h.docId,
+          breadcrumb: h.breadcrumb,
+          title: h.title,
+          url: h.url,
+          score: h.score,
+          text: h.text,
+        }));
+      } catch (err) {
+        // Return the failure as a tool result instead of throwing: the model
+        // can then tell the user the KB is unreachable rather than the whole
+        // stream dying (graceful degradation, brief §12).
+        console.error("[kb_search] failed:", err);
+        return {
+          error:
+            "Knowledge base search is unavailable right now (vector store or embedding service unreachable). Tell the user you cannot search the KB at the moment and to try again shortly — do not answer from memory.",
+        };
+      }
+    },
+  });
+}
+
+/** Read-only default (no turn context): searches, remembers nothing. */
+export const kbSearchTool = buildKbSearchTool(new Set());
+
+/**
+ * Read one KB page in full, separating the human half of the page from Mort's.
+ * Necessary before proposing an edit: `propose_doc_edit` replaces Mort's region
+ * wholesale, so he has to see what is currently in it or the "edit" silently
+ * deletes everything he isn't repeating.
+ */
+export function buildKbGetDocTool(seen: Set<string>) {
+  return tool({
+    description:
+      "Read a KB page in full by its document id (from a kb_search result). Returns the page's human-written " +
+      "content and, separately, Mort's own maintained section. ALWAYS call this before proposing an edit — the " +
+      "edit replaces Mort's section wholesale, so you need its current content to change one part of it.",
+    inputSchema: z.object({
+      docId: z.string().describe("The Outline document id, exactly as kb_search returned it."),
+    }),
+    execute: async ({ docId }): Promise<Record<string, unknown>> => {
+      try {
+        const doc = await getDocumentOrNull(docId);
+        if (!doc) return { error: `No KB page with id '${docId}'. Search for it first.` };
+        seen.add(doc.id);
+        const region = extractMortRegion(doc.text);
+        return {
+          docId: doc.id,
+          title: doc.title,
+          url: documentUrl(doc),
+          fullText: doc.text,
+          mortRegion: region,
+          note:
+            region == null
+              ? "This page has no Mort section yet — an edit would append one, leaving the existing content untouched."
+              : "Only the mortRegion is yours to rewrite. Everything else on the page is a human's and is preserved byte-for-byte.",
+        };
+      } catch (err) {
+        console.error("[kb_get_doc] failed:", err);
+        return { error: "Could not read that page from Outline right now." };
+      }
+    },
+  });
+}
 
 export const eventLogTool = tool({
   description:
@@ -172,11 +240,70 @@ export const agentTools = {
 };
 
 /**
+ * The tool belt for one chat turn: the read tools bound to a shared "seen doc
+ * ids" set, plus the write tools when chat writes are enabled.
+ *
+ * Building per-turn is the point. `seen` must not outlive the turn (a doc found
+ * in yesterday's conversation is not a doc this turn may edit), and the write
+ * tools close over the acting user so nothing the model says can change who is
+ * writing.
+ */
+export async function buildTurnTools(ctx: Omit<ToolContext, "seen">) {
+  const seen = new Set<string>();
+  const read = {
+    kb_search: buildKbSearchTool(seen),
+    kb_get_doc: buildKbGetDocTool(seen),
+    event_log: eventLogTool,
+    mort_memory: mortMemoryTool,
+    current_state: currentStateTool,
+  };
+  // The kill switch is checked here, not in the prompt: with chat writes off the
+  // write tools are not on the belt at all, so there is nothing to talk Mort into.
+  if (!(await chatWritesEnabled())) return read;
+  return { ...read, ...buildKbWriteTools({ ...ctx, seen }) };
+}
+
+/**
+ * How Mort behaves once he can change things (v2/P3). Appended only when the
+ * write tools are actually on the belt — describing tools that aren't there
+ * makes a model invent them.
+ *
+ * Note what this section does NOT do: it does not decide who may write. Role,
+ * mode and the confidence gate are enforced in tools/policy.ts, because a rule
+ * that lives in a prompt is a rule an attacker can argue with.
+ */
+export const WRITE_RULES = `Changing the knowledge base:
+- You can fix the wiki from this conversation. When someone says a page is wrong
+  ("that patching page is wrong, it's actually X"), don't just agree — find the
+  page (kb_search), read it (kb_get_doc), and propose the correction with
+  propose_doc_edit. They see a before/after diff and confirm it.
+- ALWAYS kb_get_doc before proposing an edit. The edit replaces your whole
+  section of the page, so you must start from what is currently in it. Change
+  the part that's wrong and carry the rest forward verbatim.
+- You only ever write inside your own section. The rest of the page belongs to
+  whoever wrote it and is preserved exactly — never try to edit around that.
+- Prefer extending an existing page to creating a new one. Two pages about the
+  same rack is how a wiki becomes useless. Only use create_doc when kb_search
+  has actually shown you there is nothing to extend.
+- When someone pastes a wall of information rather than asking a question, use
+  brain_dump on their message verbatim. It splits the dump into pages, facts and
+  events, finds the existing pages first, and returns a card for each.
+- What is true NOW (a height, a setting, an address) is a fact — save_fact.
+  What the crew DID on a date is an event — log_event. Neither belongs buried in
+  a page's prose.
+- NOTHING you propose is saved until the person confirms it. Say what you're
+  proposing in a line or two and leave the card to do the rest — don't paste the
+  whole page back at them, and never say you've changed something you haven't.
+  If a tool tells you it went to the review queue, say that plainly.
+- Confidence is your own honest estimate. A low one sends the change to a human
+  for review, which is the right outcome — don't inflate it to get your way.`;
+
+/**
  * Mort's voice, layered over the answering rules. The persona comes straight
  * from the shared identity module — no network round trip, no cache, no
  * unreachable-fallback needed.
  */
-export async function buildSystemPrompt(): Promise<string> {
+export async function buildSystemPrompt(opts: { canWrite?: boolean } = {}): Promise<string> {
   return [
     MORT_PERSONA,
     // Who he is, then how he talks. The voice is chat-only — the ingest agent
@@ -186,6 +313,9 @@ export async function buildSystemPrompt(): Promise<string> {
     MORT_CHAT_VOICE,
     `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
+    // Last, so the write rules sit after the scope/safety rules they must not
+    // override (prompt order: persona → voice → capability → hard rules).
+    opts.canWrite ? WRITE_RULES : "",
   ]
     .filter(Boolean)
     .join("\n\n");

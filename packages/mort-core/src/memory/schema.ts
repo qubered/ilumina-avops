@@ -175,6 +175,27 @@ export async function ensureMortSchema(): Promise<void> {
       created_at     timestamptz NOT NULL DEFAULT now()
     );
 
+    -- Confirm-then-live staging (MORT_V2_PLAN §I.4). A write tool called in chat
+    -- does NOT write — it parks the payload here and returns a pending id, which
+    -- the UI renders as a confirmation card. The write happens only when a named
+    -- human confirms, and attribution is stamped from THEIR session, never from
+    -- anything the model said.
+    CREATE TABLE IF NOT EXISTS mort_pending_actions (
+      id              uuid PRIMARY KEY,
+      conversation_id uuid,
+      user_id         text NOT NULL,          -- who Mort was talking to
+      tool            text NOT NULL,          -- apply_doc_edit | create_doc | attach_source | save_fact | log_event
+      payload         jsonb NOT NULL,
+      preview         text,                   -- what was shown for confirmation
+      status          text NOT NULL DEFAULT 'pending',  -- pending|confirmed|cancelled|expired
+      created_at      timestamptz NOT NULL DEFAULT now(),
+      expires_at      timestamptz NOT NULL DEFAULT now() + interval '24 hours',
+      decided_at      timestamptz,
+      decided_by      text
+    );
+    CREATE INDEX IF NOT EXISTS mort_pending_open
+      ON mort_pending_actions (user_id, created_at DESC) WHERE status = 'pending';
+
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);
     CREATE INDEX IF NOT EXISTS mort_events_date ON mort_events (occurred_on);

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import type { Source } from "@/lib/db/schema";
 import { stripTrailingSourcesList } from "@mort/core/kb/sources";
 import { FeedbackButtons } from "./feedback-buttons";
+import { isMortActionResult, MortActionCard, type MortActionResult } from "./mort-action-card";
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -35,6 +36,46 @@ function sourcesOf(message: UIMessage): Source[] {
     }
   }
   return [...new Map(collected.map((s) => [s.url, s])).values()];
+}
+
+/**
+ * Tool parts whose output is a confirmation card rather than something for the
+ * model to read on. Matched by output SHAPE as well as name, so a tool that
+ * errors out or gets renamed degrades to no card instead of a broken one.
+ *
+ * These parts are not persisted with the message (the DB stores the answer
+ * text), so cards live for the streamed turn. A pending action outlives its
+ * card: it stays confirmable from the admin queue, and Mort can list it again
+ * with list_pending.
+ */
+const ACTION_TOOLS = new Set([
+  "tool-propose_doc_edit",
+  "tool-create_doc",
+  "tool-attach_source",
+  "tool-save_fact",
+  "tool-log_event",
+  "tool-brain_dump",
+  "tool-apply_doc_edit",
+  "tool-confirm_pending",
+]);
+
+function actionResultsOf(message: UIMessage): MortActionResult[] {
+  const results: MortActionResult[] = [];
+  for (const part of message.parts) {
+    if (!ACTION_TOOLS.has(part.type) || !("output" in part)) continue;
+    if (isMortActionResult(part.output)) results.push(part.output);
+  }
+  return results;
+}
+
+/** Mort is mid-dump: the split is slow enough to need saying out loud. */
+function isStructuring(message: UIMessage): boolean {
+  return message.parts.some(
+    (part) =>
+      part.type === "tool-brain_dump" &&
+      "state" in part &&
+      (part.state === "input-streaming" || part.state === "input-available"),
+  );
 }
 
 function isSearching(message: UIMessage): boolean {
@@ -103,11 +144,16 @@ export function MessageItem({
 
   const sources = sourcesOf(message);
   const searching = isSearching(message);
+  const structuring = isStructuring(message);
+  const actions = actionResultsOf(message);
   const body = sources.length > 0 ? stripTrailingSourcesList(text) : text;
 
   return (
     <div className={`message-in ${compact ? "text-sm" : ""}`}>
-      {searching && !text && (
+      {structuring && !text && (
+        <p className="soft-pulse text-sm text-text-3">Working out what goes where…</p>
+      )}
+      {searching && !structuring && !text && (
         <p className="soft-pulse text-sm text-text-3">Searching the knowledge base…</p>
       )}
       {body && (
@@ -133,6 +179,9 @@ export function MessageItem({
           </ReactMarkdown>
         </div>
       )}
+      {actions.map((action, i) => (
+        <MortActionCard key={i} result={action} />
+      ))}
       {sources.length > 0 && (
         <div className="mt-3">
           <p className="mb-0.5 px-2 text-[13px] font-medium text-text-3">Sources</p>
