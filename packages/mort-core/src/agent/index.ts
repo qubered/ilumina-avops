@@ -22,6 +22,7 @@ import { searchEvents } from "../kb/events-store";
 import { documentUrl, getDocumentOrNull } from "../kb/outline";
 import { extractMortRegion } from "../kb/region";
 import { searchKb } from "../kb/store";
+import { buildMcpAdminTools, buildMcpTools, isMcpTool, MCP_RULES } from "../mcp";
 import { chatWritesEnabled, isToolAllowed, resolveKbWriteRoute } from "../tools/policy";
 import { raiseCard, type ChatToolContext, type PendingCard, type ToolFailure } from "./cards";
 import { buildKbTools } from "./kb-tools";
@@ -457,6 +458,18 @@ export function confirmPendingTool(ctx: ChatToolContext) {
           : { error: "That confirmation was already decided." };
       }
 
+      // Cancelling by text is fine for anything; CONFIRMING by text is not,
+      // once the card reaches real equipment (P5). "Yeah" is a word the model
+      // has to interpret, and getting that wrong about a fact is an edit
+      // someone reverses while getting it wrong about a contactor is not. The
+      // button is one extra tap and it removes the interpretation entirely.
+      if (action.tool === "mcp_call") {
+        return {
+          error:
+            "This one runs on connected gear, so it can only be confirmed with the button on the card — tell them to press Confirm there.",
+        };
+      }
+
       // For a KB card the policy is re-checked at confirm time as well as at
       // propose time: the mode may have flipped to shadow, or chat writes been
       // frozen, between Mort offering the card and the user saying yes.
@@ -510,13 +523,27 @@ export async function buildAgentTools(ctx: ChatToolContext): Promise<ToolSet> {
   // The chat-writes kill switch is honoured by leaving the tools off the belt
   // entirely, rather than by refusing later: a tool Mort doesn't have is a tool
   // nobody can talk him into reaching for.
-  if (!isToolAllowed("propose_doc_edit", "chat") || !(await chatWritesEnabled())) return withMemory;
-  return { ...withMemory, ...buildKbTools(ctx) };
+  const canWriteKb = isToolAllowed("propose_doc_edit", "chat") && (await chatWritesEnabled());
+  const withKb = canWriteKb ? { ...withMemory, ...buildKbTools(ctx) } : withMemory;
+
+  // The plugged-in belt (P5). Empty for anyone who isn't an admin, and empty
+  // when no server is registered and enabled — which is every deployment until
+  // someone deliberately adds one.
+  return { ...withKb, ...buildMcpAdminTools(ctx), ...(await buildMcpTools(ctx)) };
 }
 
 /** Whether this turn's belt includes the KB write tools — gates WRITE_RULES. */
 export async function chatCanWriteKb(): Promise<boolean> {
   return isToolAllowed("propose_doc_edit", "chat") && (await chatWritesEnabled());
+}
+
+/**
+ * Whether this turn's belt reaches connected equipment — gates MCP_RULES.
+ * Asked of the belt that was actually built rather than recomputed, so the
+ * prompt can never describe a tool the model doesn't have.
+ */
+export function chatHasMcpTools(tools: ToolSet): boolean {
+  return Object.keys(tools).some(isMcpTool);
 }
 
 /**
@@ -557,7 +584,7 @@ export const WRITE_RULES = `Changing the knowledge base:
 - Confidence is your own honest estimate. A low one sends the change to a human
   for review, which is the right outcome — don't inflate it to get your way.`;
 
-export async function buildSystemPrompt(opts: { canWriteKb?: boolean } = {}): Promise<string> {
+export async function buildSystemPrompt(opts: { canWriteKb?: boolean; hasMcpTools?: boolean } = {}): Promise<string> {
   return [
     MORT_PERSONA,
     // Who he is, then how he talks. The voice is chat-only — the ingest agent
@@ -567,9 +594,11 @@ export async function buildSystemPrompt(opts: { canWriteKb?: boolean } = {}): Pr
     MORT_CHAT_VOICE,
     `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
-    // Last, so the write rules sit after the scope and safety rules they must
-    // never override (order: persona → voice → answering → capability).
+    // Last, so the capability rules sit after the scope and safety rules they
+    // must never override (order: persona → voice → answering → capability),
+    // and widest blast radius last of all.
     opts.canWriteKb ? WRITE_RULES : "",
+    opts.hasMcpTools ? MCP_RULES : "",
   ]
     .filter(Boolean)
     .join("\n\n");
