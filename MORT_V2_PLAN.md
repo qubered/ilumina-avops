@@ -110,6 +110,27 @@ type TurnContext = {
 - `MAX_STEPS` stays bounded but becomes per-channel config (chat 6 → 10; ingest 12;
   dream 8) in `mort_settings`.
 
+**P6 landed** (`agent/ingest-tools.ts`, `agent/dream-tools.ts`,
+`agent/authoring-prompt.ts`, on P4's `agent/run-turn.ts`): all three channels run
+through `prepareTurn`/`runTurn` — chat streams from the plan, ingest and the dream run
+to completion inside the worker. `runIngestTurn` and `runDreamTurn` are the typed doors
+onto the machine channels; the turn state they carry (the file and the decision reached,
+the digest and what was raised) lives on the `ToolContext`, set from the entry and never
+by a tool.
+
+The two authoring engines run side by side behind `mort_settings.ingest_engine`
+(`pipeline` | `agent`, default `pipeline`). The parity harness
+(`pnpm --filter ingest parity`) diffs their decisions on a real corpus with the write
+executors stubbed, and the switch is flipped from the admin console once the diff has
+been read. Rolling back is the same switch.
+
+`note_understanding` fuses v1's passes 1 and 2: stating what the file is *is* the
+request for the corpus around it, so a turn can never start deciding from nothing —
+which is the turn that would create a duplicate page. The machine turns stop on a
+decision being RECORDED rather than on a decision tool being CALLED, because a refused
+call (deciding before understanding, deciding twice) has to leave the turn alive to
+correct itself. A turn that runs out of steps holds the file; it never guesses.
+
 ### I.3 The unified tool belt
 
 Every tool declares a **policy tier**; the harness enforces tiers per turn and journals
@@ -117,9 +138,9 @@ every invocation (name, args hash, actor, channel, conversation, outcome, latenc
 
 | Tier | Meaning | Tools |
 |---|---|---|
-| `read` | No side effects | `kb_search`, `kb_get_doc`, `event_log_search`, `mort_memory`, `current_state`, `list_pending`, `web_search` (provider) |
+| `read` | No side effects | `kb_search`, `kb_get_doc`, `event_log`, `mort_memory`, `current_state`, `list_pending`, `confirm_pending`, `note_understanding`, `hold_file`, `skip_file`, `finish_dream`, `web_search` (provider) |
 | `write:memory` | Mort's own state — cheap to reverse | `save_fact`, `retire_fact`, `log_event`, `note_lesson` |
-| `write:kb` | Outline pages — mort-region safe writes | `propose_doc_edit`, `apply_doc_edit`, `create_doc`, `attach_source` |
+| `write:kb` | Outline pages — mort-region safe writes, and the review queue that stands in for them | chat: `propose_doc_edit`, `apply_doc_edit`, `create_doc`, `attach_source`, `brain_dump` · ingest: `create_page`, `update_page`, `attach_to_page`, `send_to_review` · dream: `raise_proposal` |
 | `write:world` | Anything beyond Mort's systems | all MCP-provided tools (default; per-tool override possible) |
 | `admin` | Operator actions | `decide_review`, `set_mode`, `mcp_toggle` |
 
@@ -131,8 +152,13 @@ Tier policy by channel and role:
   require per-call confirmation.
 - **ingest**: `read` + `write:kb` under the existing shadow/confidence gates. No
   `write:world`, no `write:memory` for facts (ingest never invents facts — v1 premise:
-  facts require a named human).
-- **dream**: `read` + `note_lesson` + `propose_doc_edit` (housekeeping proposals only).
+  facts require a named human). The tier admits only the authoring tools, narrowed per
+  spec in the registry: chat's card-raisers are off this channel, because there is no
+  human in front of an ingest turn to confirm anything, and a tool that waits for one
+  would silently do nothing.
+- **dream**: `read` + `note_lesson` (P7) + `raise_proposal`. It holds `write:kb` for the
+  review queue alone — every executing tool is off the channel, so "a dream proposes and
+  a human decides" is a property of the belt rather than a convention.
 
 ### I.4 Confirm-then-live mechanics (V2-1)
 

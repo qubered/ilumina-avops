@@ -2,9 +2,10 @@ import { env } from "../env.js";
 import { extract } from "../extract.js";
 import { getSelfUserId } from "@mort/core/kb/outline";
 import { classifyRole } from "./classify.js";
-import { getEffectiveMode, getEffectiveThreshold } from "@mort/core/memory/config";
+import { getEffectiveMode, getEffectiveThreshold, getIngestEngine } from "@mort/core/memory/config";
+import { runDreamTurn } from "@mort/core/agent/run-turn";
+import { runMortAgentTurn } from "./agent-turn.js";
 import { buildTurnDeps } from "./deps.js";
-import { dream, dreamDedupeKey, validateProposals } from "./dream.js";
 import { syncEventSheet } from "./events.js";
 import { indexEvents } from "./eventindex.js";
 import {
@@ -20,7 +21,6 @@ import {
   appendJournal,
   deleteEventsByHash,
   docDigest,
-  enqueueReview,
   findMortIdByOutlineId,
   getBlob,
   getEventHashes,
@@ -67,7 +67,9 @@ export async function initWorker(): Promise<void> {
     dreamTimer = setInterval(() => void runDream(), env.MORT_DREAM_INTERVAL_HOURS * 3_600_000);
     dreamTimer.unref?.();
   }
-  console.log(`[mort] worker ready (mode=${await getEffectiveMode()}, self=${selfUserId ?? "unknown"})`);
+  console.log(
+    `[mort] worker ready (mode=${await getEffectiveMode()}, engine=${await getIngestEngine()}, self=${selfUserId ?? "unknown"})`,
+  );
   void drain();
 }
 
@@ -171,7 +173,7 @@ async function recheckUnfiled(): Promise<number> {
  *
  *  1. Re-check what's still homeless — the cheap, mechanical half (no model).
  *  2. Ask what only the whole corpus can answer — what's missing, what
- *     contradicts, what should merge. Proposals only; see dream.ts.
+ *     contradicts, what should merge. Proposals only; see agent/dream-tools.ts.
  *
  * Exported so the admin route can trigger one on demand rather than waiting for
  * the interval.
@@ -192,35 +194,24 @@ export async function runDream(): Promise<{ raised: number; skipped: number; rec
   const [library, docs] = await Promise.all([libraryDigest(), docDigest()]);
   if (!library.length) return { raised: 0, skipped: 0, rechecked };
 
-  const { proposals, tokens } = await dream({ library, docs });
-  const valid = validateProposals(proposals, { library, docs });
-
-  let raised = 0;
-  for (const p of valid) {
-    // Idempotent on the dedupe key: a nightly dream that notices the same thing
-    // again is silent, so a proposal a human already dismissed stays dismissed.
-    const isNew = await enqueueReview({
-      action: `DREAM:${p.kind}`,
-      sourceId: p.sourceIds[0] ?? null,
-      mortId: p.docIds[0] ?? null,
-      rationale: p.rationale,
-      payload: { title: p.title, sourceIds: p.sourceIds, docIds: p.docIds, confidence: p.confidence },
-      dedupeKey: dreamDedupeKey(p),
-    });
-    if (isNew) raised++;
-  }
+  // A dream is a turn now (v2/P6): same loop, same harness, same journal — it
+  // just gets the read tools and the review queue instead of the pen, so it can
+  // actually READ the two pages before claiming they contradict each other.
+  // Proposals stay idempotent on their dedupe key, so a nightly dream re-raises
+  // nothing a human already dismissed.
+  const { raised, duplicates, tokens, steps } = await runDreamTurn({ library, docs });
 
   await appendJournal({
     action: "dream",
-    rationale: `looked at ${library.length} file(s) and ${docs.length} page(s) — re-checked ${rechecked} held, raised ${raised} new of ${valid.length}`,
+    rationale: `looked at ${library.length} file(s) and ${docs.length} page(s) over ${steps} step(s) — re-checked ${rechecked} held, raised ${raised.length} new, ${duplicates} already known`,
     tokens,
     model: env.INGEST_AI_PROVIDER,
     channel: "dream",
   });
   console.log(
-    `[mort] dreamt over ${library.length} file(s) and ${docs.length} page(s) — ${raised} new proposal(s), ${valid.length - raised} already known`,
+    `[mort] dreamt over ${library.length} file(s) and ${docs.length} page(s) — ${raised.length} new proposal(s), ${duplicates} already known`,
   );
-  return { raised, skipped: valid.length - raised, rechecked };
+  return { raised: raised.length, skipped: duplicates, rechecked };
 }
 
 async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
@@ -279,18 +270,28 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
   if (role === "reference" || role === "media") {
     await saveBlob(job.sourceId, { fileName: job.fileName, contentType: job.contentType, data: job.data });
   }
-  const outcome = await runMortTurn(
-    {
-      sourceId: job.sourceId,
-      fileName: job.fileName,
-      folderPath: job.folderPath ?? undefined,
-      contentType: job.contentType,
-      extractedMarkdown: extraction.markdown,
-      extractionKind: extraction.kind,
-    },
-    { mode: mode === "live" ? "live" : "shadow", confidenceThreshold: await getEffectiveThreshold() },
-    d,
-  );
+  const file = {
+    sourceId: job.sourceId,
+    fileName: job.fileName,
+    folderPath: job.folderPath ?? undefined,
+    contentType: job.contentType,
+    extractedMarkdown: extraction.markdown,
+    extractionKind: extraction.kind,
+  };
+
+  // Which engine decides (v2/P6). Read per job rather than cached at boot, so
+  // an admin flipping it — or rolling it back — takes effect on the next file
+  // instead of the next deploy. Both engines produce the same TurnOutcome and
+  // write the same journal row; everything downstream of here is identical.
+  const engine = await getIngestEngine();
+  const outcome =
+    engine === "agent"
+      ? await runMortAgentTurn(file, role, d)
+      : await runMortTurn(
+          file,
+          { mode: mode === "live" ? "live" : "shadow", confidenceThreshold: await getEffectiveThreshold() },
+          d,
+        );
 
   // Record what Mort understood — on every path, including SKIP/HOLD. The library
   // is how he stays aware of files he didn't turn into articles.
@@ -305,7 +306,7 @@ async function processJob(job: MortJob, d: TurnDeps): Promise<void> {
     entities: outcome.understanding.entities,
   });
   console.log(
-    `[mort] ${job.sourceId}: ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""} — ${outcome.understanding.summary}`,
+    `[mort] ${job.sourceId} (${engine}): ${outcome.decided} → ${outcome.executed}${outcome.docId ? ` (${outcome.docId})` : ""} — ${outcome.understanding.summary}`,
   );
 
   // A page just changed. That changes what its siblings should do — an artifact

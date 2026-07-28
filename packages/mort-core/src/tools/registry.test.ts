@@ -170,14 +170,49 @@ describe("belt assembly", () => {
     expect(Object.keys(belt)).not.toContain("mcp_toggle");
   });
 
-  it("hands the ingest channel nothing but the read tools", async () => {
+  it("hands the ingest channel the read tools plus its own authoring tools (P6)", async () => {
     const belt = await buildBelt(ctx({ channel: "ingest", user: null }));
-    expect(Object.keys(belt).sort()).toEqual(["current_state", "event_log", "kb_get_doc", "kb_search", "mort_memory"]);
+    expect(Object.keys(belt).sort()).toEqual([
+      "attach_to_page",
+      "create_page",
+      "current_state",
+      "event_log",
+      "hold_file",
+      "kb_get_doc",
+      "kb_search",
+      "mort_memory",
+      "note_understanding",
+      "send_to_review",
+      "skip_file",
+      "update_page",
+    ]);
   });
 
-  it("hands the dream the same read-only belt", async () => {
+  it("keeps chat's card-raising write tools off the ingest belt", async () => {
+    // The authoring tools execute under the shadow/confidence gates; chat's
+    // park a card for a person to confirm. There is no person on this channel,
+    // so a tool that waits for one would silently do nothing.
+    const belt = await buildBelt(ctx({ channel: "ingest", user: null }));
+    for (const tool of ["propose_doc_edit", "create_doc", "attach_source", "brain_dump", "save_fact", "log_event"]) {
+      expect(Object.keys(belt)).not.toContain(tool);
+    }
+  });
+
+  it("gives the dream the read tools and one way to reach a human", async () => {
+    // R7: a dream proposes, a human decides. raise_proposal is the whole of its
+    // write:kb tier and finish_dream just ends the turn.
     const belt = await buildBelt(ctx({ channel: "dream", user: null }));
-    for (const tool of ["save_fact", "log_event", "propose_doc_edit", "create_doc"]) {
+    expect(Object.keys(belt)).toContain("raise_proposal");
+    expect(Object.keys(belt)).toContain("finish_dream");
+    for (const tool of [
+      "save_fact",
+      "log_event",
+      "propose_doc_edit",
+      "create_doc",
+      "create_page",
+      "update_page",
+      "attach_to_page",
+    ]) {
       expect(Object.keys(belt)).not.toContain(tool);
     }
   });

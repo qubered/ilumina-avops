@@ -15,6 +15,16 @@ import {
   saveFactTool,
 } from "../agent/memory-tools";
 import { attachSourceTool, brainDumpTool, createDocTool, proposeDocEditTool } from "../agent/kb-tools";
+import {
+  attachToPageTool,
+  createPageTool,
+  holdFileTool,
+  noteUnderstandingTool,
+  sendToReviewTool,
+  skipFileTool,
+  updatePageTool,
+} from "../agent/ingest-tools";
+import { finishDreamTool, raiseProposalTool } from "../agent/dream-tools";
 import { buildMcpAdminTools, buildMcpTools, mcpTools } from "../mcp";
 import { chatWritesEnabled, isTierAllowed } from "./policy";
 import { harness, type ToolContext } from "./harness";
@@ -124,6 +134,34 @@ export const TOOL_SPECS: ToolSpec[] = [
     enabled: kbWritesOn,
     build: (ctx) => brainDumpTool(chatCtx(ctx)),
   },
+
+  // --- the authoring turn (P6) ---------------------------------------------
+  //
+  // Named apart from chat's create_doc / propose_doc_edit / attach_source
+  // deliberately. Same tier, same routing through resolveKbWriteRoute — but
+  // chat's park a card for a person to confirm and these execute under the
+  // gates, because there is no person on this channel. One name for two
+  // behaviours would be the worse lie.
+  //
+  // `channels: ["ingest"]` is doing real work here, not documentation: it is
+  // what stops a conversation reaching a tool that writes without a card.
+  { name: "note_understanding", tier: "read", channels: ["ingest"], build: noteUnderstandingTool },
+  // hold_file and skip_file are `read` because the tier measures blast radius,
+  // not how final the tool sounds: neither touches anything outside the turn.
+  { name: "hold_file", tier: "read", channels: ["ingest"], build: holdFileTool },
+  { name: "skip_file", tier: "read", channels: ["ingest"], build: skipFileTool },
+  { name: "create_page", tier: "write:kb", channels: ["ingest"], build: createPageTool },
+  { name: "update_page", tier: "write:kb", channels: ["ingest"], build: updatePageTool },
+  { name: "attach_to_page", tier: "write:kb", channels: ["ingest"], build: attachToPageTool },
+  { name: "send_to_review", tier: "write:kb", channels: ["ingest"], build: sendToReviewTool },
+
+  // --- the dream (P6) -------------------------------------------------------
+  //
+  // The whole write:kb tier the dream channel has, and it only reaches the
+  // review queue. R7's rule — a dream proposes, a human decides — enforced by
+  // there being nothing else on the channel to reach for.
+  { name: "raise_proposal", tier: "write:kb", channels: ["dream"], build: raiseProposalTool },
+  { name: "finish_dream", tier: "read", channels: ["dream"], build: finishDreamTool },
 
   // --- admin — the console, in chat form (P5) ------------------------------
   //

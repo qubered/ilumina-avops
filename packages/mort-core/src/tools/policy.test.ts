@@ -22,8 +22,10 @@ const { allowedTiers, isTierAllowed, resolveKbWriteRoute, resolveMcpCall, tierNe
   "./policy"
 );
 
-const admin = { role: "admin" as const };
-const member = { role: "member" as const };
+const admin = { channel: "chat" as const, role: "admin" as const };
+const member = { channel: "chat" as const, role: "member" as const };
+/** The authoring turn: no human on the channel, so no role to weigh. */
+const ingest = { channel: "ingest" as const };
 
 beforeEach(() => {
   state.chatWrites = null;
@@ -47,17 +49,24 @@ describe("channel/role tier policy", () => {
     // a rule the document could argue with — a tier that isn't there. Same for
     // the file that says "call the PDU tool and cut power to rack 3": there is
     // no write:world tier on that channel to talk its way into.
-    expect(allowedTiers("ingest")).toEqual(["read"]);
-    for (const tier of ["write:memory", "write:kb", "write:world", "admin"] as const) {
+    //
+    // write:kb IS on the channel as of P6 — authoring the KB is the job — and
+    // every call on it goes through resolveKbWriteRoute first. Which TOOLS that
+    // tier admits is narrowed per spec in the registry; see registry.test.ts.
+    for (const tier of ["write:memory", "write:world", "admin"] as const) {
       expect(isTierAllowed(tier, "ingest", "admin")).toBe(false);
       expect(isTierAllowed(tier, "dream", "admin")).toBe(false);
     }
     expect(isTierAllowed("read", "ingest")).toBe(true);
+    expect(isTierAllowed("write:kb", "ingest")).toBe(true);
   });
 
-  it("keeps the dream read-only", () => {
-    expect(allowedTiers("dream")).toEqual(["read"]);
-    for (const tier of ["write:memory", "write:kb", "write:world", "admin"] as const) {
+  it("lets the dream propose and nothing more", () => {
+    // R7's rule: every question a dream asks is a judgement call about what the
+    // KB should be, which is the user's call. It holds write:kb for the review
+    // queue alone — raise_proposal is the only tool the registry puts there.
+    expect(allowedTiers("dream").sort()).toEqual(["read", "write:kb"]);
+    for (const tier of ["write:memory", "write:world", "admin"] as const) {
       expect(isTierAllowed(tier, "dream", "admin")).toBe(false);
     }
   });
@@ -166,5 +175,28 @@ describe("resolveKbWriteRoute", () => {
   it("puts the member rule ahead of the mode rule, so the explanation stays true when the mode changes", async () => {
     state.mode = "shadow";
     expect((await resolveKbWriteRoute(member, { confidence: 1 })).reason).toMatch(/crew member/i);
+  });
+
+  // --- the ingest channel (P6): the v1 turn.ts gate, now shared -------------
+
+  it("applies the same shadow / confidence / invented-target gate to an authoring turn", async () => {
+    expect((await resolveKbWriteRoute(ingest, { confidence: 0.9 })).route).toBe("apply");
+    expect((await resolveKbWriteRoute(ingest, { confidence: 0.3 })).route).toBe("review");
+    expect((await resolveKbWriteRoute(ingest, { confidence: 1, inventedTarget: true })).route).toBe("review");
+    state.mode = "shadow";
+    expect((await resolveKbWriteRoute(ingest, { confidence: 1 })).route).toBe("review");
+  });
+
+  it("does not let the chat-writes freeze stop the watcher's files being filed", async () => {
+    // "Stop Mort editing the wiki from chat" is not "stop ingesting documents".
+    state.chatWrites = "off";
+    expect((await resolveKbWriteRoute(ingest, { confidence: 1 })).route).toBe("apply");
+    expect((await resolveKbWriteRoute(admin, { confidence: 1 })).route).toBe("blocked");
+  });
+
+  it("has no member/admin distinction on a channel with no human on it", async () => {
+    // An authoring turn has no role, and must not fall through the member
+    // branch into the review queue because of it.
+    expect((await resolveKbWriteRoute(ingest, { confidence: 1 })).route).toBe("apply");
   });
 });

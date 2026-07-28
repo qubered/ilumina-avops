@@ -10,6 +10,17 @@ import { actorLabelOf } from "../tools/harness";
 import type { Channel } from "../tools/types";
 import { buildSystemPrompt, chatCanWriteKb, chatHasMcpTools } from "./prompt";
 import type { ActingUser } from "./pending-actions";
+import {
+  hasDecided,
+  newIngestState,
+  type IngestDecision,
+  type IngestDeps,
+  type IngestFile,
+  type IngestUnderstanding,
+} from "./ingest-tools";
+import { dreamFinished, newDreamState } from "./dream-tools";
+import type { DreamInput, DreamProposal } from "./proposal";
+import { DREAM_INSTRUCTIONS, dreamPrompt, INGEST_INSTRUCTIONS, ingestPrompt } from "./authoring-prompt";
 
 /**
  * One Mort turn (MORT_V2_PLAN I.2).
@@ -28,18 +39,25 @@ import type { ActingUser } from "./pending-actions";
  *  - `runTurn` is the whole turn, non-streaming: prepare, run the loop, meter
  *    what it cost. The job worker uses this.
  *
- * P6 moves ingestion onto `runTurn` proper (classify stays deterministic;
- * understand/gather/decide become agent reasoning over this same belt). What
- * P4 lands is the harness that makes that safe to do: the ingest channel's
- * policy, step cap and spend accounting are enforced here now, so P6 is a
- * change of prompt rather than a change of trust model.
+ * P6 finishes the job: ingestion and the dream run here now. `classify` stays
+ * deterministic pre-processing; understand/gather/decide become agent reasoning
+ * over this same belt, and the dream gains the ability to read a page before
+ * claiming two of them contradict each other. Because P4 had already put the
+ * ingest channel's policy, step cap and spend accounting in this file, that was
+ * a change of prompt and tools rather than a change of trust model — which is
+ * why `runIngestTurn` below is thirty lines and not three hundred.
+ *
+ * The two machine entries carry their turn state (the file and the decision so
+ * far; the digest and what has been raised) onto the ToolContext, where the
+ * tools read it. It is set here, from the entry, and never by a tool.
  */
 
 export type TurnEntry =
   | { kind: "chat"; messages: ModelMessage[] }
-  /** A file turn. The prompt is the caller's — the belt and the policy are not. */
-  | { kind: "ingest"; prompt: string; sourceId?: string }
-  | { kind: "dream"; prompt: string };
+  /** A file turn (P6). The prompt is derived from the file, not supplied. */
+  | { kind: "ingest"; file: IngestFile; deps: IngestDeps }
+  /** The nightly look over the whole corpus (P6). */
+  | { kind: "dream"; digest: DreamInput };
 
 export type TurnContext = {
   channel: Channel;
@@ -83,6 +101,12 @@ export type TurnResult = {
   steps: number;
   /** Set when the turn never ran (spend cap). */
   blocked: string | null;
+  /**
+   * The context the belt ran against. A machine turn's outcome lives on it —
+   * the decision an ingest turn reached, the proposals a dream raised — because
+   * the tools record what they did rather than the loop guessing from the text.
+   */
+  toolContext: ToolContext;
 };
 
 const actingUser = (actor: TurnContext["actor"]): ActingUser | null => (actor === "system" ? null : actor);
@@ -102,11 +126,19 @@ const actingUser = (actor: TurnContext["actor"]): ActingUser | null => (actor ==
  * connected tools this turn.
  */
 async function systemFor(entry: TurnEntry, tools: ToolSet): Promise<string> {
-  if (entry.kind !== "chat") return MORT_AUTHORING_PREAMBLE;
+  if (entry.kind === "ingest") return `${MORT_AUTHORING_PREAMBLE}\n\n${INGEST_INSTRUCTIONS}`;
+  if (entry.kind === "dream") return `${MORT_AUTHORING_PREAMBLE}\n\n${DREAM_INSTRUCTIONS}`;
   return buildSystemPrompt({
     canWriteKb: await chatCanWriteKb(),
     hasMcpTools: chatHasMcpTools(tools),
   });
+}
+
+/** The turn's opening message: the file, or the digest of the whole corpus. */
+function promptFor(entry: TurnEntry): string {
+  if (entry.kind === "ingest") return ingestPrompt(entry.file);
+  if (entry.kind === "dream") return dreamPrompt(entry.digest);
+  return "";
 }
 
 async function modelFor(ctx: TurnContext): Promise<LanguageModel> {
@@ -131,6 +163,11 @@ export async function prepareTurn(entry: TurnEntry, ctx: TurnContext): Promise<T
     messageId: ctx.messageId ?? null,
     seen: new Set<string>(),
     onWritten: ctx.onWritten,
+    // The machine channels' turn state, built from the entry. A tool never
+    // creates this — it reads it — so what a turn is about cannot be changed
+    // from inside the turn.
+    ingest: entry.kind === "ingest" ? newIngestState(entry.file, entry.deps) : undefined,
+    dream: entry.kind === "dream" ? newDreamState(entry.digest) : undefined,
   };
 
   const rail = spendRail({
@@ -176,18 +213,29 @@ export async function runTurn(entry: TurnEntry, ctx: TurnContext): Promise<TurnR
   const plan = await prepareTurn(entry, ctx);
   if (plan.blocked) {
     console.warn(`[mort] ${ctx.channel} turn not started: ${plan.blocked.reason}`);
-    return { text: "", tokens: 0, steps: 0, blocked: plan.blocked.reason };
+    return { text: "", tokens: 0, steps: 0, blocked: plan.blocked.reason, toolContext: plan.toolContext };
   }
 
   const messages: ModelMessage[] =
-    entry.kind === "chat" ? entry.messages : [{ role: "user", content: entry.prompt }];
+    entry.kind === "chat" ? entry.messages : [{ role: "user", content: promptFor(entry) }];
 
   const result = await generateText({
     model: await modelFor(ctx),
     ...plan.systemOptions,
     messages,
     tools: plan.tools,
-    stopWhen: stepCountIs(plan.maxSteps),
+    // Two stops on the machine channels, and both matter. The first is the
+    // normal ending — the turn has reached its end state, and letting the model
+    // keep going after that is how you get a second decision. It checks the
+    // STATE rather than "was a terminal tool called", because a terminal tool
+    // can be refused (deciding before understanding, deciding twice) and a
+    // refusal must leave the turn alive to correct itself. The step count is
+    // the rail: it bounds a turn that is looping, hedging, or being argued with
+    // by the document it is reading.
+    stopWhen:
+      entry.kind === "chat"
+        ? stepCountIs(plan.maxSteps)
+        : [stepCountIs(plan.maxSteps), () => isDone(entry, plan.toolContext)],
   });
 
   const tokens = result.totalUsage?.totalTokens ?? 0;
@@ -195,5 +243,81 @@ export async function runTurn(entry: TurnEntry, ctx: TurnContext): Promise<TurnR
   // was spent, not what was gained.
   await plan.spend.record(tokens, { model: ctx.channel === "chat" ? null : modelLabel() });
 
-  return { text: result.text, tokens, steps: result.steps.length, blocked: null };
+  return { text: result.text, tokens, steps: result.steps.length, blocked: null, toolContext: plan.toolContext };
+}
+
+/** Has a machine turn reached its end state? */
+function isDone(entry: TurnEntry, ctx: ToolContext): boolean {
+  if (entry.kind === "ingest") return hasDecided(ctx);
+  if (entry.kind === "dream") return dreamFinished(ctx);
+  return false;
+}
+
+// --- the machine channels, typed (P6) ---------------------------------------
+
+export type IngestTurnResult = {
+  decision: IngestDecision;
+  understanding: IngestUnderstanding | null;
+  tokens: number;
+  steps: number;
+  blocked: string | null;
+};
+
+/**
+ * One file, one decision.
+ *
+ * The fallback when nothing was decided is a HOLD, not a guess. The file stays
+ * in the library and is re-checked whenever a page it might belong on appears,
+ * so the cost of holding is a delay — where the cost of guessing is a wrong
+ * page that reads as authoritative. Same for a turn the spend cap stopped: it
+ * has spent nothing and decided nothing, and the queue will bring the file back
+ * tomorrow.
+ */
+export async function runIngestTurn(
+  file: IngestFile,
+  deps: IngestDeps,
+  ctx: Omit<TurnContext, "channel" | "actor"> & { actor?: TurnContext["actor"] } = {},
+): Promise<IngestTurnResult> {
+  const result = await runTurn(
+    { kind: "ingest", file, deps },
+    { ...ctx, channel: "ingest", actor: ctx.actor ?? "system" },
+  );
+  const state = result.toolContext.ingest;
+  const decision: IngestDecision = state?.decision ?? {
+    action: "HOLD",
+    executed: "held",
+    rationale: result.blocked ?? `no decision within ${result.steps} step(s) — held for the next re-check`,
+    confidence: null,
+  };
+  return {
+    decision,
+    understanding: state?.understanding ?? null,
+    tokens: result.tokens,
+    steps: result.steps,
+    blocked: result.blocked,
+  };
+}
+
+export type DreamTurnResult = {
+  raised: DreamProposal[];
+  /** Observations Mort had already raised and that are still in the queue. */
+  duplicates: number;
+  tokens: number;
+  steps: number;
+  blocked: string | null;
+};
+
+export async function runDreamTurn(
+  digest: DreamInput,
+  ctx: Omit<TurnContext, "channel" | "actor"> & { actor?: TurnContext["actor"] } = {},
+): Promise<DreamTurnResult> {
+  const result = await runTurn({ kind: "dream", digest }, { ...ctx, channel: "dream", actor: ctx.actor ?? "system" });
+  const state = result.toolContext.dream;
+  return {
+    raised: state?.raised ?? [],
+    duplicates: state?.duplicates ?? 0,
+    tokens: result.tokens,
+    steps: result.steps,
+    blocked: result.blocked,
+  };
 }

@@ -31,6 +31,35 @@ export async function getEffectiveThreshold(): Promise<number> {
   return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : env.MORT_CONFIDENCE_THRESHOLD;
 }
 
+// --- Ingestion engine (v2/P6) ----------------------------------------------
+
+/**
+ * Which engine decides what happens to an arriving file.
+ *
+ * `pipeline` is v1's fixed three passes: understand → gather → decide.
+ * `agent` is the same judgement made inside `runTurn` on the shared belt,
+ * which is where v2 is going — but the two must be diffed on a real corpus
+ * before the switch is thrown (MORT_V2_PLAN I.2; see the parity harness,
+ * `pnpm --filter ingest parity`). So the flag exists, it is a runtime setting
+ * rather than a redeploy, and the default stays on the engine whose behaviour
+ * is already known. Rolling back is the same switch.
+ */
+export type IngestEngine = "pipeline" | "agent";
+const ENGINES: IngestEngine[] = ["pipeline", "agent"];
+
+export function isIngestEngine(v: unknown): v is IngestEngine {
+  return typeof v === "string" && (ENGINES as string[]).includes(v);
+}
+
+export async function getIngestEngine(): Promise<IngestEngine> {
+  const v = await getSetting("ingest_engine");
+  return isIngestEngine(v) ? v : env.MORT_INGEST_ENGINE;
+}
+
+export async function setIngestEngine(engine: IngestEngine): Promise<void> {
+  await setSetting("ingest_engine", engine);
+}
+
 /**
  * How many tool-calling steps a turn may take, per channel (MORT_V2_PLAN I.2,
  * v2 P4). Runtime-settable in `mort_settings` as `max_steps_<channel>`.

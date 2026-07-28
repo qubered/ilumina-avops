@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dreamDedupeKey, validateProposals, type DreamProposal } from "./proposal.js";
+import { dreamDedupeKey, knownRefs, proposalProblem, type DreamProposal } from "./proposal.js";
 import type { DocEntry, LibraryEntry } from "./types.js";
 
 function proposal(over: Partial<DreamProposal> = {}): DreamProposal {
@@ -64,31 +64,24 @@ test("different subjects are different proposals", () => {
 
 // --- validation ------------------------------------------------------------
 
-const INPUT = { library: [lib("Video/sdi.pdf")], docs: [doc("d1")] };
+const KNOWN = knownRefs({ library: [lib("Video/sdi.pdf")], docs: [doc("d1")] });
 
-test("a proposal about real files and pages survives", () => {
-  assert.equal(validateProposals([proposal()], INPUT).length, 1);
+test("a proposal about real files and pages is raisable", () => {
+  assert.equal(proposalProblem(proposal(), KNOWN), null);
 });
 
-test("a proposal citing a file Mort doesn't have is dropped", () => {
-  const p = proposal({ sourceIds: ["Video/ghost.pdf"] });
-  assert.deepEqual(validateProposals([p], INPUT), []);
+test("a proposal citing a file Mort doesn't have is refused, and says which", () => {
+  const problem = proposalProblem(proposal({ sourceIds: ["Video/ghost.pdf"] }), KNOWN);
+  assert.match(problem ?? "", /Video\/ghost\.pdf/);
 });
 
-test("a proposal citing a page Mort doesn't have is dropped", () => {
-  const p = proposal({ kind: "MERGE", sourceIds: [], docIds: ["nope"] });
-  assert.deepEqual(validateProposals([p], INPUT), []);
+test("a proposal citing a page Mort doesn't have is refused", () => {
+  const problem = proposalProblem(proposal({ kind: "MERGE", sourceIds: [], docIds: ["nope"] }), KNOWN);
+  assert.match(problem ?? "", /nope/);
 });
 
-test("a proposal about nothing at all is dropped", () => {
+test("a proposal about nothing at all is refused", () => {
   // No refs means there's nothing for a human to look at — it's a vibe, not an
   // observation.
-  const p = proposal({ sourceIds: [], docIds: [] });
-  assert.deepEqual(validateProposals([p], INPUT), []);
-});
-
-test("one bad proposal doesn't take the good ones with it", () => {
-  const good = proposal();
-  const bad = proposal({ title: "ghost", sourceIds: ["Video/ghost.pdf"] });
-  assert.deepEqual(validateProposals([bad, good, bad], INPUT), [good]);
+  assert.notEqual(proposalProblem(proposal({ sourceIds: [], docIds: [] }), KNOWN), null);
 });
