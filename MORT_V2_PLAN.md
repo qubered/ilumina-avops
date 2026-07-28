@@ -251,8 +251,10 @@ Every piece of taught knowledge answers "who, when, where":
 - `mort_events` gains `reported_by`, `conversation_id`. Chat-taught events use
   `source_id = 'chat:<conversationId>'` with `row_hash = sha256(normalized content)`,
   so they flow through the existing reconcile/index machinery untouched.
-- `mort_journal` gains `actor` (user id or `system`), `channel` (`chat|ingest|dream`),
-  and `conversation_id`; the v1 `mort_id`-sometimes-holds-an-outline-id inconsistency
+- `mort_journal` gains `actor` (user id or `system`), `channel`
+  (`chat|ingest|dream|admin` — the console is a door a named human comes through,
+  so it earns its own value rather than being filed under `ingest`), and
+  `conversation_id`; the v1 `mort_id`-sometimes-holds-an-outline-id inconsistency
   is migrated to explicit `mort_id` + `outline_document_id` columns.
 
 So "how do you know that?" is answerable, verbatim, from data:

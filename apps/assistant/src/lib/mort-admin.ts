@@ -5,6 +5,7 @@ import { executeReview } from "@mort/core/kb/execute";
 import { getEffectiveMode, getEffectiveThreshold, setMode as coreSetMode } from "@mort/core/memory/config";
 import {
   appendJournal,
+  factHistory as coreFactHistory,
   getReviewItem,
   listCurrentFacts as coreListCurrentFacts,
   listLibrary,
@@ -13,6 +14,7 @@ import {
   resolveReview,
   retireFact as coreRetireFact,
   saveFactSuperseding,
+  type MortFact as CoreMortFact,
 } from "@mort/core/memory";
 import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob, tokensToday } from "@mort/core/memory/jobs";
 import { listRecentPendingActions, type PendingAction } from "@mort/core/memory/pending";
@@ -62,13 +64,20 @@ export async function decideReview(
   // can't handle it yet (ATTACH/tombstone), leave the item pending and 422.
   try {
     const selfUserId = await getSelfUserId().catch(() => null);
-    const result = await executeReview(item, buildWriteDeps(selfUserId));
+    // The write is Mort's, but the decision to make it is this admin's — the
+    // journal records the person, from the session, not from anything typed.
+    const result = await executeReview(
+      item,
+      buildWriteDeps(selfUserId, { channel: "admin", actor: decidedBy ?? null }),
+    );
     await resolveReview(id, "approved", decidedBy);
     await appendJournal({
       sourceId: item.source_id,
       outlineDocumentId: result.docId,
       action: `approved:${item.action}`,
       rationale: `review ${id}`,
+      channel: "admin",
+      actor: decidedBy ?? null,
     });
     return { ok: true, status: 200, json: { id, status: "approved", ...result } };
   } catch (err) {
@@ -141,6 +150,9 @@ export type MortActivityRow = {
   model: string | null;
   docTitle: string | null;
   outlineDocumentId: string | null;
+  actor: string;
+  channel: "chat" | "ingest" | "dream" | "admin";
+  conversationId: string | null;
 };
 
 export type MortLibraryRow = {
@@ -188,19 +200,8 @@ export async function getMortActivity(query?: string): Promise<MortActivity | nu
   }
 }
 
-export type MortFact = {
-  id: number;
-  factKey: string;
-  value: string;
-  scope: string | null;
-  effectiveFrom: string | null;
-  effectiveTo: string | null;
-  sourceTier: string | null;
-  approvedBy: string;
-  confidence: string | null;
-  note: string | null;
-  supersedes: number | null;
-};
+/** Core's fact shape, provenance included — the admin UI renders it verbatim. */
+export type MortFact = CoreMortFact;
 
 export type MortPendingAction = PendingAction;
 
@@ -229,28 +230,59 @@ export async function listCurrentFacts(query?: string): Promise<MortFact[]> {
   }
 }
 
+/** Every value a key has ever held, newest first — "what was it before?". */
+export async function getFactHistory(factKey: string, scope: string | null): Promise<MortFact[]> {
+  try {
+    return await coreFactHistory(factKey, { scope });
+  } catch (err) {
+    console.error("[mort-admin] getFactHistory failed:", err);
+    return [];
+  }
+}
+
 /**
  * Declare a fact from the admin panel. Goes through the same superseding path
  * as a fact taught in chat, so a key can only ever have one current answer
- * however it was declared.
+ * however it was declared — and the superseded row stays readable as history.
  */
 export async function createFact(
-  fact: Omit<MortFact, "id" | "effectiveTo" | "supersedes">,
+  fact: Pick<MortFact, "factKey" | "value" | "scope" | "effectiveFrom" | "note" | "approvedBy"> & {
+    sourceTier?: string | null;
+    confidence?: string | null;
+  },
 ): Promise<{ ok: boolean; status: number; json: unknown }> {
   try {
-    const { id, superseded } = await saveFactSuperseding(fact);
+    // taughtVia 'admin' is the whole difference between this and the chat
+    // path: same write, different door, and the chip says which.
+    const { id, superseded } = await saveFactSuperseding({ ...fact, taughtVia: "admin" });
+    const supersededId = superseded?.id ?? null;
     await appendJournal({
       action: "fact_approved",
-      rationale: `${fact.factKey} = ${fact.value} (by ${fact.approvedBy}${superseded ? `, supersedes #${superseded.id}` : ""})`,
+      rationale:
+        `${fact.factKey} = ${fact.value} (by ${fact.approvedBy}` +
+        (supersededId != null ? `, supersedes #${supersededId}` : "") +
+        ")",
+      channel: "admin",
+      actor: fact.approvedBy,
     });
-    return { ok: true, status: 201, json: { id } };
+    return { ok: true, status: 201, json: { id, supersededId } };
   } catch (err) {
     return { ok: false, status: 500, json: { error: err instanceof Error ? err.message : "failed" } };
   }
 }
 
-export async function retireFact(id: number): Promise<{ ok: boolean }> {
+export async function retireFact(id: number, retiredBy: string): Promise<{ ok: boolean }> {
   const ok = await coreRetireFact(id);
+  // Retiring is a decision too — without this the fact simply stops appearing
+  // and nothing anywhere records who decided it was no longer true.
+  if (ok) {
+    await appendJournal({
+      action: "fact_retired",
+      rationale: `fact ${id}`,
+      channel: "admin",
+      actor: retiredBy,
+    });
+  }
   return { ok };
 }
 

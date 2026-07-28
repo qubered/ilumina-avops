@@ -1,4 +1,5 @@
 import { pool } from "./db";
+import { withKeyLock } from "./lock";
 import type {
   DocEntry,
   EventRow,
@@ -251,6 +252,12 @@ export async function deleteSourceRelations(sourceId: string): Promise<void> {
 
 // --- Journal ---------------------------------------------------------------
 
+/**
+ * Which door an entry came through. `admin` is the console; `chat` is a
+ * conversation; `ingest` is a file turn; `dream` is the nightly reflection.
+ */
+export type JournalChannel = "chat" | "ingest" | "dream" | "admin";
+
 export async function appendJournal(entry: {
   sourceId?: string | null;
   /** A real mort_id (Mort's canonical slug) — NOT an Outline document id, see outlineDocumentId. */
@@ -264,10 +271,19 @@ export async function appendJournal(entry: {
   tokens?: number | null;
   costUsd?: number | null;
   conflicts?: unknown;
+  /**
+   * Provenance (P2). Required so no call site can quietly log an unattributed
+   * decision: every entry says which door it came through. `actor` defaults to
+   * the literal 'system' for machine-initiated turns — it must come from a
+   * session or a job, never from model output.
+   */
+  channel: JournalChannel;
+  actor?: string | null;
+  conversationId?: string | null;
 }): Promise<void> {
   await pool.query(
-    `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts, actor, channel, conversation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
       entry.sourceId ?? null,
       entry.mortId ?? null,
@@ -279,6 +295,9 @@ export async function appendJournal(entry: {
       entry.tokens ?? null,
       entry.costUsd ?? null,
       entry.conflicts != null ? JSON.stringify(entry.conflicts) : null,
+      entry.actor ?? "system",
+      entry.channel,
+      entry.conversationId ?? null,
     ],
   );
 }
@@ -415,6 +434,11 @@ export type ActivityRow = {
   docTitle: string | null;
   /** Outline id, so the UI can link straight to the page. */
   outlineDocumentId: string | null;
+  /** Who caused it — a user id/email, or 'system' for a machine-initiated turn. */
+  actor: string;
+  channel: JournalChannel;
+  /** Set when the entry came out of a conversation, so the UI can link to it. */
+  conversationId: string | null;
 };
 
 /**
@@ -428,6 +452,7 @@ export type ActivityRow = {
 export async function recentActivity(limit = 50): Promise<ActivityRow[]> {
   const { rows } = await pool.query(
     `SELECT j.ts, j.source_id, j.action, j.rationale, j.confidence, j.tokens, j.model,
+            j.actor, j.channel, j.conversation_id,
             d.title AS doc_title, COALESCE(j.outline_document_id, d.outline_document_id) AS outline_document_id
        FROM mort_journal j
        LEFT JOIN mort_docs d
@@ -446,6 +471,9 @@ export async function recentActivity(limit = 50): Promise<ActivityRow[]> {
     model: r.model,
     docTitle: r.doc_title,
     outlineDocumentId: r.outline_document_id,
+    actor: r.actor as string,
+    channel: r.channel as JournalChannel,
+    conversationId: r.conversation_id,
   }));
 }
 
@@ -571,6 +599,9 @@ export async function docDigest(limit = 300): Promise<DocEntry[]> {
 
 // --- Current-state facts (R1 slice 3) --------------------------------------
 
+/** Which door a fact was taught through (P2 provenance). */
+export type TaughtVia = "chat" | "admin" | "ingest";
+
 /**
  * A fact's window is HALF-OPEN: in force from `effectiveFrom` (inclusive) until
  * `effectiveTo` (exclusive). Retiring a fact today therefore stamps today — it
@@ -588,6 +619,12 @@ export type MortFact = {
   approvedBy: string;
   confidence: string | null;
   note: string | null;
+  /** When it was learnt — the wall-clock moment, as opposed to the date it took effect. */
+  createdAt: string;
+  taughtVia: TaughtVia;
+  /** Set for chat-taught facts: the conversation, and the message that said it. */
+  conversationId: string | null;
+  messageId: string | null;
   /** The fact this one replaced, when it corrected an earlier answer. */
   supersedes: number | null;
 };
@@ -603,11 +640,16 @@ const mapFact = (r: Record<string, unknown>): MortFact => ({
   approvedBy: r.approved_by as string,
   confidence: (r.confidence as string) ?? null,
   note: (r.note as string) ?? null,
+  createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at ?? ""),
+  taughtVia: (r.taught_via as TaughtVia) ?? "admin",
+  conversationId: (r.conversation_id as string) ?? null,
+  messageId: (r.message_id as string) ?? null,
   supersedes: (r.supersedes as number) ?? null,
 });
 
 const FACT_COLS = `id::int AS id, fact_key, value, scope, effective_from, effective_to,
-                   source_tier, approved_by, confidence, note, supersedes::int AS supersedes`;
+                   source_tier, approved_by, confidence, note, created_at,
+                   taught_via, conversation_id, message_id, supersedes::int AS supersedes`;
 
 /** Facts in force today, optionally filtered by free text. */
 export async function listCurrentFacts(q?: string, limit = 25): Promise<MortFact[]> {
@@ -654,7 +696,19 @@ export async function findCurrentFactByKey(factKey: string, scope?: string | nul
   return rows.length ? mapFact(rows[0]) : null;
 }
 
-export async function insertFact(f: {
+/**
+ * Provenance for a declared fact (P2): which door it came through and, for
+ * anything said in conversation, exactly which message said it — so an answer
+ * can deep-link back to the moment it was learnt. Never model-supplied; the
+ * caller stamps it from the session.
+ */
+export type FactProvenance = {
+  taughtVia?: TaughtVia;
+  conversationId?: string | null;
+  messageId?: string | null;
+};
+
+export type FactInput = {
   factKey: string;
   value: string;
   scope?: string | null;
@@ -666,10 +720,13 @@ export async function insertFact(f: {
   note?: string | null;
   /** id of the fact this one replaces — the history chain (MORT_V2_PLAN I.7). */
   supersedes?: number | null;
-}): Promise<number> {
+} & FactProvenance;
+
+export async function insertFact(f: FactInput): Promise<number> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note, supersedes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::int AS id`,
+    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note,
+                             supersedes, taught_via, conversation_id, message_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id::int AS id`,
     [
       f.factKey,
       f.value,
@@ -681,6 +738,11 @@ export async function insertFact(f: {
       f.confidence ?? null,
       f.note ?? null,
       f.supersedes ?? null,
+      // 'admin' is the honest default: the console is the only caller that
+      // doesn't say, because it is the door v1 facts all came through.
+      f.taughtVia ?? "admin",
+      f.conversationId ?? null,
+      f.messageId ?? null,
     ],
   );
   return rows[0].id as number;
@@ -694,22 +756,46 @@ export async function insertFact(f: {
  * new one's start date and the new row points back at it, so a fact's history
  * is a chain rather than an overwrite (MORT_V2_PLAN I.7, wiring the `supersedes`
  * column v1 defined but never used).
+ *
+ * Held under the per-key advisory lock: two people teaching the same key at
+ * once would otherwise both find no current row and both insert, leaving the
+ * key with two live values and no supersession between them.
  */
-export async function saveFactSuperseding(f: {
-  factKey: string;
-  value: string;
-  scope?: string | null;
-  effectiveFrom?: string | null;
-  sourceTier?: string | null;
-  approvedBy: string;
-  confidence?: string | null;
-  note?: string | null;
-}): Promise<{ id: number; superseded: MortFact | null; effectiveFrom: string }> {
-  const effectiveFrom = f.effectiveFrom ?? new Date().toISOString().slice(0, 10);
-  const superseded = await findCurrentFactByKey(f.factKey, f.scope ?? null);
-  if (superseded) await retireFact(superseded.id, effectiveFrom);
-  const id = await insertFact({ ...f, effectiveFrom, supersedes: superseded?.id ?? null });
-  return { id, superseded, effectiveFrom };
+export function saveFactSuperseding(
+  f: Omit<FactInput, "effectiveTo" | "supersedes">,
+): Promise<{ id: number; superseded: MortFact | null; effectiveFrom: string }> {
+  return withKeyLock("fact", `${f.factKey.trim().toLowerCase()}|${(f.scope ?? "").trim().toLowerCase()}`, async () => {
+    const effectiveFrom = f.effectiveFrom ?? new Date().toISOString().slice(0, 10);
+    const superseded = await findCurrentFactByKey(f.factKey, f.scope ?? null);
+    if (superseded) await retireFact(superseded.id, effectiveFrom);
+    const id = await insertFact({ ...f, effectiveFrom, supersedes: superseded?.id ?? null });
+    return { id, superseded, effectiveFrom };
+  });
+}
+
+/**
+ * The full life of a fact key, newest first — "what is it, and what was it
+ * before?" answered from data rather than from the model's memory of the
+ * conversation. Every row carries its own provenance, so each step of the
+ * chain can name who said it and when.
+ */
+export async function factHistory(
+  factKey: string,
+  opts: { scope?: string | null; limit?: number } = {},
+): Promise<MortFact[]> {
+  // Omitting `scope` means "every scope"; passing it explicitly — including as
+  // null — narrows to that one, because an unscoped fact is its own fact.
+  const narrow = "scope" in opts;
+  const { rows } = await pool.query(
+    `SELECT ${FACT_COLS} FROM mort_facts
+      WHERE lower(btrim(fact_key)) = lower(btrim($1))
+        AND ($2::boolean IS FALSE
+             OR lower(btrim(coalesce(scope,''))) = lower(btrim(coalesce($3::text,''))))
+      ORDER BY id DESC
+      LIMIT $4`,
+    [factKey, narrow, opts.scope ?? null, Math.min(Math.max(opts.limit ?? 20, 1), 50)],
+  );
+  return rows.map(mapFact);
 }
 
 /**
@@ -735,10 +821,14 @@ export type MemoryJournalRow = {
   action: string;
   rationale: string | null;
   confidence: number | null;
+  /** P2: who and through which door — so "why did you do that?" also answers "on whose say-so?". */
+  actor: string;
+  channel: JournalChannel;
+  conversationId: string | null;
 };
 export type MemoryFileRow = { sourceId: string; role: string; folderOrigin: string | null; summary: string | null };
 
-const JOURNAL_COLS = `ts, source_id, mort_id, action, rationale, confidence`;
+const JOURNAL_COLS = `ts, source_id, mort_id, action, rationale, confidence, actor, channel, conversation_id`;
 const mapJournal = (r: Record<string, unknown>): MemoryJournalRow => ({
   ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
   sourceId: (r.source_id as string) ?? null,
@@ -746,6 +836,9 @@ const mapJournal = (r: Record<string, unknown>): MemoryJournalRow => ({
   action: r.action as string,
   rationale: (r.rationale as string) ?? null,
   confidence: (r.confidence as number) ?? null,
+  actor: (r.actor as string) ?? "system",
+  channel: (r.channel as JournalChannel) ?? "ingest",
+  conversationId: (r.conversation_id as string) ?? null,
 });
 const mapFile = (r: Record<string, unknown>): MemoryFileRow => ({
   sourceId: r.source_id as string,
@@ -791,9 +884,11 @@ export async function searchMemory(params: { q?: string; docId?: string; limit?:
   if (q) {
     const like = `%${q}%`;
     const { rows: jr } = await pool.query(
+      // actor is searchable so "what has Jayden had me change?" / "who told
+      // you that?" resolve out of the journal rather than out of thin air.
       `SELECT ${JOURNAL_COLS} FROM mort_journal
         WHERE source_id ILIKE $1 OR rationale ILIKE $1 OR action ILIKE $1
-           OR mort_id ILIKE $1 OR outline_document_id ILIKE $1
+           OR mort_id ILIKE $1 OR outline_document_id ILIKE $1 OR actor ILIKE $1
         ORDER BY ts DESC LIMIT $2`,
       [like, limit],
     );
@@ -817,13 +912,62 @@ export async function getEventHashes(sourceId: string): Promise<string[]> {
   return rows.map((r) => r.row_hash as string);
 }
 
-export async function insertEvent(sourceId: string, row: EventRow): Promise<void> {
+/**
+ * Provenance for an episodic event (P2). Sheet rows have none — the file named
+ * by `source_id` is the provenance — so both fields are optional and stay null
+ * for the ingest path.
+ */
+export type EventProvenance = { reportedBy?: string | null; conversationId?: string | null };
+
+export async function insertEvent(
+  sourceId: string,
+  row: EventRow,
+  provenance: EventProvenance = {},
+): Promise<void> {
   await pool.query(
-    `INSERT INTO mort_events (source_id, row_hash, event, occurred_on, zone, system, entities, action_text)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO mort_events (source_id, row_hash, event, occurred_on, zone, system, entities, action_text, reported_by, conversation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (source_id, row_hash) DO NOTHING`,
-    [sourceId, row.rowHash, row.event, row.occurredOn, row.zone, row.system, row.entities, row.actionText],
+    [
+      sourceId,
+      row.rowHash,
+      row.event,
+      row.occurredOn,
+      row.zone,
+      row.system,
+      row.entities,
+      row.actionText,
+      provenance.reportedBy ?? null,
+      provenance.conversationId ?? null,
+    ],
   );
+}
+
+/**
+ * Provenance for events already in episodic memory, keyed by (source, row).
+ * The vector store is the search index but not the record of who said what —
+ * points indexed before P2 have no provenance in their payload, so the answer
+ * path reads it back from Postgres, which always has it.
+ */
+export async function eventProvenance(
+  keys: Array<{ sourceId: string; rowHash: string }>,
+): Promise<Map<string, EventProvenance & { occurredOn: string | null }>> {
+  const out = new Map<string, EventProvenance & { occurredOn: string | null }>();
+  if (!keys.length) return out;
+  const { rows } = await pool.query(
+    `SELECT source_id, row_hash, reported_by, conversation_id, occurred_on
+       FROM mort_events
+      WHERE (source_id, row_hash) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
+    [keys.map((k) => k.sourceId), keys.map((k) => k.rowHash)],
+  );
+  for (const r of rows) {
+    out.set(`${r.source_id} ${r.row_hash}`, {
+      reportedBy: (r.reported_by as string) ?? null,
+      conversationId: (r.conversation_id as string) ?? null,
+      occurredOn: r.occurred_on ? String(r.occurred_on).slice(0, 10) : null,
+    });
+  }
+  return out;
 }
 
 export async function deleteEventsByHash(sourceId: string, hashes: string[]): Promise<void> {

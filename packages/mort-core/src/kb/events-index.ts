@@ -13,7 +13,17 @@ import { ensureEventsCollection, pruneEvents, upsertEvents, type EventPayload } 
  * on failure the row still lives there for a reindex to pick up. A turn never
  * fails because embeddings or Qdrant are down.
  */
-export async function indexEvents(sourceId: string, insertedRows: EventRow[], allRowHashes: string[]): Promise<void> {
+export async function indexEvents(
+  sourceId: string,
+  insertedRows: EventRow[],
+  allRowHashes: string[],
+  /**
+   * Who reported these rows and where (P2). Carried onto the point so a search
+   * hit can be attributed without a second round trip; sheet rows have none,
+   * and `mort_events` stays the authority for anything that needs certainty.
+   */
+  provenance: { reportedBy?: string | null; conversationId?: string | null } = {},
+): Promise<void> {
   try {
     await ensureEventsCollection();
 
@@ -33,6 +43,8 @@ export async function indexEvents(sourceId: string, insertedRows: EventRow[], al
           zone: r.zone,
           system: r.system,
           entities: r.entities,
+          reportedBy: provenance.reportedBy ?? null,
+          conversationId: provenance.conversationId ?? null,
         } as EventPayload,
       }));
       await upsertEvents(points);

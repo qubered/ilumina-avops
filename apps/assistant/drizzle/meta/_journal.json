@@ -36,6 +36,13 @@
       "when": 1785198082830,
       "tag": "0004_pending-actions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785199116435,
+      "tag": "0005_message-provenance",
+      "breakpoints": true
     }
   ]
 }
