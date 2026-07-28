@@ -16,8 +16,13 @@ import { createHash } from "node:crypto";
  *
  * Keys are sorted before hashing so the answer doesn't depend on the order the
  * model happened to emit them in; without that, "same call" is never true twice.
+ *
+ * Takes `unknown` rather than an object because the universal audit (P4) hashes
+ * whatever a tool was actually called with, and a no-argument tool is called
+ * with nothing at all. `canonical` has always handled primitives; the narrower
+ * signature only ever described the MCP case.
  */
-export function hashArgs(args: Record<string, unknown>): string {
+export function hashArgs(args: unknown): string {
   return createHash("sha256").update(canonical(args)).digest("hex").slice(0, 16);
 }
 

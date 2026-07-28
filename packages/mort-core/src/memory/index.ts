@@ -1,5 +1,6 @@
 import { pool } from "./db";
 import { withKeyLock } from "./lock";
+import { recordSpend } from "./spend";
 import type {
   DocEntry,
   EventRow,
@@ -289,9 +290,10 @@ export async function appendJournal(entry: {
    */
   details?: unknown;
 }): Promise<void> {
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts, actor, channel, conversation_id, details)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     RETURNING id::int AS id`,
     [
       entry.sourceId ?? null,
       entry.mortId ?? null,
@@ -309,6 +311,21 @@ export async function appendJournal(entry: {
       entry.details != null ? JSON.stringify(entry.details) : null,
     ],
   );
+
+  // Mirror the cost into the spend ledger (P4). Done here rather than at every
+  // call site so the ingest turn and the dream keep counting toward the daily
+  // cap with no change to either — and keyed on the journal row so the
+  // migration that seeded the ledger from history can't double-count them.
+  if (entry.tokens) {
+    await recordSpend({
+      channel: entry.channel,
+      actor: entry.actor ?? "system",
+      conversationId: entry.conversationId ?? null,
+      model: entry.model ?? null,
+      tokens: entry.tokens,
+      journalId: rows[0]?.id ?? null,
+    });
+  }
 }
 
 // --- Doc state (curated detection + CAS) -----------------------------------
@@ -1014,18 +1031,10 @@ export async function deleteBlob(sourceId: string): Promise<void> {
 
 // --- Runtime settings ------------------------------------------------------
 
-export async function getSetting(key: string): Promise<string | null> {
-  const { rows } = await pool.query(`SELECT value FROM mort_settings WHERE key = $1`, [key]);
-  return rows.length ? (rows[0].value as string) : null;
-}
-
-export async function setSetting(key: string, value: string): Promise<void> {
-  await pool.query(
-    `INSERT INTO mort_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [key, value],
-  );
-}
+// They live in ./settings now (P4) so the spend ledger and the tier policy can
+// read a setting without importing this module; re-exported here because
+// `@mort/core/memory` is where every existing call site expects them.
+export { getNumericSetting, getSetting, setSetting } from "./settings";
 
 export async function getReviewItem(id: number): Promise<ReviewRow | null> {
   const { rows } = await pool.query(

@@ -23,10 +23,14 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("../memory", () => ({
-  getSetting: async (key: string) => (key === "mcp" ? state.mcp : null),
   appendJournal: async (entry: { action: string; details?: Record<string, unknown> }) => {
     state.journal.push(entry);
   },
+}));
+// The `mcp` master switch is read through memory/settings (P4 split it out of
+// memory/index so the spend ledger and the policy could share it).
+vi.mock("../memory/settings", () => ({
+  getSetting: async (key: string) => (key === "mcp" ? state.mcp : null),
 }));
 vi.mock("../memory/config", () => ({
   getEffectiveMode: async () => "live",

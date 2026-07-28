@@ -23,11 +23,16 @@ const parked = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const reviewed = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 vi.mock("../memory", () => ({
-  getSetting: async (key: string) => (key === "chat_writes" ? state.chatWrites : null),
   enqueueReview: async (item: Record<string, unknown>) => {
     reviewed.push(item);
     return true;
   },
+}));
+
+// The chat-writes kill switch is read through memory/settings (P4 split it out
+// of memory/index so the spend ledger and the policy could share it).
+vi.mock("../memory/settings", () => ({
+  getSetting: async (key: string) => (key === "chat_writes" ? state.chatWrites : null),
 }));
 
 vi.mock("../memory/config", () => ({

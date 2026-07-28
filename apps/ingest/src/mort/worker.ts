@@ -13,9 +13,9 @@ import {
   enqueueJob,
   failJob,
   reapStuckJobs,
-  tokensToday,
   type MortJob,
 } from "@mort/core/memory/jobs";
+import { spendRail } from "@mort/core/memory/spend";
 import {
   appendJournal,
   deleteEventsByHash,
@@ -82,10 +82,15 @@ export function kickWorker(): void {
   void drain();
 }
 
-async function overDailyCap(): Promise<boolean> {
-  if (!env.MORT_DAILY_TOKEN_CAP) return false;
-  return (await tokensToday()) >= env.MORT_DAILY_TOKEN_CAP;
-}
+/**
+ * The shared spend rail (v2 P4). It used to be this file's own sum over
+ * `mort_journal.tokens`, which only ever counted what ingestion and the dream
+ * spent — so a busy day of chat cost nothing as far as the cap was concerned.
+ * One ledger now, every channel, and the cap itself is admin-settable at
+ * runtime rather than env-only. See @mort/core/memory/spend.
+ */
+const ingestSpend = spendRail({ channel: "ingest" });
+const dreamSpend = spendRail({ channel: "dream" });
 
 async function drain(): Promise<void> {
   if (running) return;
@@ -98,9 +103,10 @@ async function drain(): Promise<void> {
       const mode = await getEffectiveMode();
       if (mode === "off") return; // jobs stay queued until Mort is switched back on
 
-      if (await overDailyCap()) {
+      if (await ingestSpend.exceeded()) {
+        const { spentToday, cap } = await ingestSpend.status();
         console.warn(
-          `[mort] daily token cap (${env.MORT_DAILY_TOKEN_CAP}) reached — pausing; queued jobs resume tomorrow`,
+          `[mort] daily token cap (${spentToday}/${cap}) reached across all channels — pausing; queued jobs resume tomorrow`,
         );
         return;
       }
@@ -173,7 +179,7 @@ async function recheckUnfiled(): Promise<number> {
 export async function runDream(): Promise<{ raised: number; skipped: number; rechecked: number } | null> {
   const mode = await getEffectiveMode();
   if (mode === "off") return null;
-  if (await overDailyCap()) {
+  if (await dreamSpend.exceeded()) {
     console.warn("[mort] daily token cap reached — skipping the dream");
     return null;
   }

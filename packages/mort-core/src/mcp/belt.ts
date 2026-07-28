@@ -49,7 +49,11 @@ type McpReply = PendingCard | ToolFailure | { status: "blocked"; reason: string 
  */
 export async function buildMcpTools(ctx: ChatToolContext, channel: Channel = "chat"): Promise<ToolSet> {
   if (ctx.user.role !== "admin") return {};
-  if (!isTierAllowed("write:world", channel)) return {};
+  // The role is passed explicitly rather than left to default (P4): the policy
+  // table now says write:world is admin-only at the tier as well as here, and
+  // the default is `member` precisely so a forgotten role argument fails
+  // closed.
+  if (!isTierAllowed("write:world", channel, ctx.user.role)) return {};
 
   try {
     await syncMcpConnections();
@@ -61,7 +65,7 @@ export async function buildMcpTools(ctx: ChatToolContext, channel: Channel = "ch
   const belt: ToolSet = {};
   for (const info of mcpTools()) {
     if (!info.enabled) continue;
-    if (!isTierAllowed(info.tier, channel)) continue;
+    if (!isTierAllowed(info.tier, channel, ctx.user.role)) continue;
     const definition = mcpToolDefinition(info.server, info.tool);
     if (!definition) continue;
 

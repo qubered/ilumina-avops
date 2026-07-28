@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { getPendingAction, isKbWriteTool, type PendingAction } from "@mort/core/memory/pending";
-import { isToolAllowed, resolveKbWriteRoute } from "@mort/core/tools/policy";
+import { getPendingAction, isKbWriteTool, pendingToolTier, type PendingAction } from "@mort/core/memory/pending";
+import { isTierAllowed, resolveKbWriteRoute } from "@mort/core/tools/policy";
 import { actingUserFromSession } from "@/lib/acting-user";
 import { requireSession, type Session } from "@/lib/auth";
 import { conversations, db } from "@/lib/db";
@@ -31,10 +31,13 @@ export async function guardDecision(
   params: Promise<{ id: string }> | { id: string },
   opts: {
     /**
-     * Skip the "may this still be applied" check. Set by the review route:
-     * diverting a card to the admin queue is the SAFE outcome, so it must stay
-     * available precisely when applying no longer is (mode flipped to shadow
-     * while the card sat there).
+     * Skip the "may this still be applied" checks. Set by the two routes that
+     * don't apply anything: cancel and send-to-review. Both are the SAFE
+     * outcome for a card, so both must stay available precisely when applying
+     * no longer is — the mode flipped to shadow while the card sat there, chat
+     * writes were frozen, or the admin who raised it was demoted. A rule that
+     * exists to stop things happening must never be the reason someone can't
+     * call something off.
      */
     allowNonApplicable?: boolean;
   } = {},
@@ -56,21 +59,31 @@ export async function guardDecision(
   if (action.status !== "pending") {
     return fail(409, `That confirmation was already ${action.status}.`);
   }
-  if (!isToolAllowed(action.tool, "chat")) {
-    return fail(403, "That action isn't allowed from chat.");
+  // Everything below is a "may this still be APPLIED" question, and this guard
+  // also fronts cancel and send-to-review. A card that can no longer be applied
+  // must still be dismissable — a rule whose whole job is to stop things
+  // happening must never become the reason someone can't call something off.
+  if (!opts.allowNonApplicable) {
+    // The card's own tier, re-derived from the stored tool name — a card
+    // outlives the turn that raised it, so there is no belt left to ask.
+    // Checked against the confirming user's CURRENT role: they are the person
+    // it was raised with (the ownership check above), but roles change, and an
+    // admin demoted since then should no longer be able to cash in a
+    // write:world card.
+    if (!isTierAllowed(pendingToolTier(action.tool), "chat", actingUserFromSession(session).role)) {
+      return fail(403, "That action isn't allowed from chat.");
+    }
+    // A KB card gets its routing re-checked too, not just its tier: shadow
+    // mode, the chat-writes freeze and the caller's role are all runtime state
+    // that may have changed since Mort raised the card.
+    if (isKbWriteTool(action.tool)) {
+      const route = await resolveKbWriteRoute(actingUserFromSession(session));
+      if (route.route !== "apply") return fail(403, route.reason);
+    }
   }
-  // A KB card gets its routing re-checked too, not just its tier: shadow mode,
-  // the chat-writes freeze and the caller's role are all runtime state that may
-  // have changed since Mort raised the card. "Send to review" is still open in
-  // that case — see the review route, which deliberately skips this check.
-  if (isKbWriteTool(action.tool) && !opts.allowNonApplicable) {
-    const route = await resolveKbWriteRoute(actingUserFromSession(session));
-    if (route.route !== "apply") return fail(403, route.reason);
-  }
-  // Note what is NOT re-checked here: an `mcp_call` card's role and master
-  // switch. That check belongs to the confirm route alone (see below), because
-  // this guard also fronts cancel — and a switch whose whole job is to stop
-  // things happening must never be the reason someone can't call something off.
+  // Note what is NOT re-checked even then: an `mcp_call` card's master switch.
+  // That check belongs to the confirm route alone, which is the only caller
+  // that actually reaches equipment.
 
   // The card names a conversation; make sure it's still this user's.
   if (action.conversationId) {

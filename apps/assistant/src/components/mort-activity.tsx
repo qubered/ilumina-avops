@@ -1,7 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { MortActiveJob, MortActivity, MortActivityRow, MortLibraryRow } from "@/lib/mort-admin";
+import type {
+  MortActiveJob,
+  MortActivity,
+  MortActivityRow,
+  MortLibraryRow,
+  MortToolCall,
+} from "@/lib/mort-admin";
 
 /**
  * What Mort is doing, what he's working through, and everything he holds.
@@ -65,13 +71,95 @@ function ago(iso: string): string {
 }
 
 export function MortActivityPanel({ activity, outlineUrl }: { activity: MortActivity; outlineUrl: string }) {
-  const { journal, library, queue } = activity;
+  const { journal, library, queue, toolCalls } = activity;
   return (
     <>
       {queue.length > 0 && <InFlight queue={queue} />}
       <Activity journal={journal} outlineUrl={outlineUrl} />
+      <ToolLog calls={toolCalls} />
       <Library library={library} />
     </>
+  );
+}
+
+const OUTCOME_TONE: Record<string, string> = {
+  ok: "text-text-3",
+  error: "text-danger",
+  refused: "text-danger",
+};
+
+/**
+ * Every tool Mort reached for, on every channel (P4, decision V2-5).
+ *
+ * Separate from the journal above on purpose. That one answers "why is this
+ * page like this" and is a handful of entries a day; this is every kb_search of
+ * every turn, and is read for a different question — did anything try to reach
+ * past its channel, and is the harness seeing it all.
+ *
+ * Refusals are pulled to the top of the section rather than left in date order:
+ * on the ingest channel a refusal is the signature of a document trying to talk
+ * Mort into writing something, and that must not scroll away under a hundred
+ * routine searches.
+ */
+function ToolLog({ calls }: { calls: MortToolCall[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const refused = calls.filter((c) => c.outcome === "refused");
+  const shown = showAll ? calls : refused.length > 0 ? refused : calls.slice(0, 12);
+
+  return (
+    <section className="mt-10">
+      <div className="flex flex-wrap items-center gap-2 border-b border-divider pb-2">
+        <h2 className="text-[15px] font-semibold text-text">
+          Tools he reached for <span className="font-normal text-text-3">({calls.length})</span>
+        </h2>
+        {calls.length > shown.length && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="ml-auto rounded border border-divider px-2 py-0.5 text-[11px] text-text-2 hover:text-text"
+          >
+            Show all
+          </button>
+        )}
+      </div>
+      <p className="mt-2 text-[13px] text-text-3">
+        Every tool call, whatever the channel — including the ones the policy tiers refused.
+        {refused.length > 0 && !showAll && ` Showing the ${refused.length} refused first.`}
+      </p>
+
+      {shown.length === 0 ? (
+        <p className="mt-4 text-sm text-text-3">Nothing yet.</p>
+      ) : (
+        <ul className="mt-3 space-y-1.5">
+          {shown.map((c) => (
+            <li key={c.id} className="rounded-md border border-divider bg-menu px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className={`text-[12px] font-semibold ${OUTCOME_TONE[c.outcome] ?? "text-text-2"}`}>
+                  {c.outcome === "ok" ? "called" : c.outcome}
+                </span>
+                <span className="font-medium text-text">{c.tool}</span>
+                <span className="rounded border border-divider px-1.5 py-0.5 text-[11px] text-text-3">{c.tier}</span>
+                <span className="ml-auto shrink-0 text-[11px] text-text-3">{ago(c.ts)}</span>
+              </div>
+              {c.detail && <p className="mt-1 text-[12px] text-danger">{c.detail}</p>}
+              <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-text-3">
+                <span>
+                  {c.actor === "system" ? "on his own" : c.actor} · {CHANNEL_LABEL[c.channel as MortActivityRow["channel"]] ?? c.channel}
+                </span>
+                <span>{c.latencyMs}ms</span>
+                {c.conversationId && (
+                  <a
+                    href={`/c/${c.conversationId}`}
+                    className="underline decoration-divider underline-offset-2 hover:decoration-text-3"
+                  >
+                    conversation
+                  </a>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

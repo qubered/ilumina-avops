@@ -139,7 +139,7 @@ Caveats for codex mode: it's the **unofficial ChatGPT backend** — outside Open
 1. **Sync** — Outline docs (markdown) are fetched via the POST-RPC API. An optional leading metadata block (`Zone:` / `System:` / `Type:`, comma-splittable, case-insensitive) is parsed into Qdrant payload fields and stripped from the indexed body.
 2. **Chunking** — heading-aware splitting on `#`–`####` (code fences ignored), ~500-token target, oversized sections split on paragraph boundaries with a ~60-token tail overlap, tiny adjacent chunks merged. Every chunk starts with a `[Doc title › Heading › Subheading]` breadcrumb so it's self-describing.
 3. **Retrieval** — Voyage embeddings (`input_type` document/query), cosine search in the `ilumina_kb` Qdrant collection, top 5.
-4. **Agent** — `streamText` with a `kb_search` tool and up to 10 steps; the system prompt (brief §7, verbatim) forbids answering outside the KB and requires a Sources list. Sources are collected from the tool results actually used, deduped, persisted with the message, and rendered as chips.
+4. **Agent** — `streamText` with a `kb_search` tool and up to `max_steps_chat` (10) steps; the system prompt (brief §7, verbatim) forbids answering outside the KB and requires a Sources list. Sources are collected from the tool results actually used, deduped, persisted with the message, and rendered as chips. The belt itself comes from the tool harness below.
 
 ## Fixing the wiki from chat
 
@@ -149,9 +149,19 @@ The rules that make that safe are enforced in code, never in the prompt:
 
 - **No tool writes.** A write tool parks its payload in `mort_pending_actions` and returns a preview. The write happens in `POST /api/mort/actions/[id]/confirm`, run by a named human, with attribution taken from that human's **session** — never from the request body, never from the model.
 - **Mort only edits his own region.** Every doc write goes through the v1 safe-write machinery (`<!-- mort:start -->` markers, per-doc locks, revision CAS, human-edit detection). Human content outside the markers is preserved byte-for-byte, a page Mort has never touched gets a region appended rather than rewritten, and a page with a *malformed* region is never auto-spliced — it goes to review.
-- **Policy tiers, resolved server-side** (`packages/mort-core/src/tools/policy.ts`): crew members can only propose (→ admin review queue); `shadow` mode turns every chat KB write into a proposal, admins included; a low-confidence edit, or one aimed at a doc id the model never actually found in a search result, goes to review.
+- **Policy tiers, resolved server-side** (`packages/mort-core/src/tools/`): crew members can only propose (→ admin review queue); `shadow` mode turns every chat KB write into a proposal, admins included; a low-confidence edit, or one aimed at a doc id the model never actually found in a search result, goes to review.
 - **Kill switch**: admin page → *Chat writes: Frozen* stops every chat-originated write without touching questions and answers. Per-user cap of 30 proposals a day.
 - Applied edits re-index immediately, so the change is searchable in the next answer, and every one is journaled into the admin activity panel.
+
+## The tool harness
+
+One registry, one policy, one audit trail (`MORT_V2_PLAN.md` §I.2–I.3, decision V2-5). Every tool Mort has is declared once in `packages/mort-core/src/tools/registry.ts` with its **policy tier** — `read`, `write:memory`, `write:kb`, `write:world`, `admin` — and `tools/policy.ts` says which tiers exist on which channel, for which role.
+
+- **A turn is `runTurn(entry, ctx)`** (`packages/mort-core/src/agent/run-turn.ts`). The channel (`chat` / `ingest` / `dream`) and the actor are properties of the turn, and the belt follows from them *before* any prompt exists — so what Mort can do is never a function of what the turn says. Chat streams, so the route uses `prepareTurn` and drives `streamText` itself; the plan is identical either way.
+- **Injection posture**: a document arriving from OneDrive is processed on the `ingest` channel, which has no `write:memory` tier at all. It cannot teach Mort a fact however it phrases itself — not because the prompt says so, but because the tool isn't there. If one reaches a belt by some other route, the harness refuses it at call time and logs the attempt.
+- **Every call is journaled** to `mort_tool_calls`: tool, tier, actor, channel, conversation, an args *hash*, outcome (`ok` / `error` / `refused`) and latency. Refusals sort to the top of the admin tool log. This is a different artifact from `mort_journal`, which stays the decision journal — why a page is the way it is, a handful of rows a day.
+- **Connected equipment is not an exception.** The `mcp__*` tools a server contributes can't be static registry entries — they're discovered at runtime and their tier comes from the server's row — so `buildBelt` synthesises a spec per tool per turn and wraps them in the same harness. They keep their richer `mort_journal` entry (server, tool, tier, latency) *and* get the uniform call-log row.
+- **One spend rail**: the daily token cap covers every channel, not just ingestion (`mort_spend`). Chat is metered but never blocked by it — cutting a crew member off mid-bump-in because the nightly dream was expensive is the worse failure. Per-channel soft budgets and step caps live in `mort_settings` (`max_steps_chat` 10, `max_steps_ingest` 12, `max_steps_dream` 8) and show in the admin health panel.
 
 `brain_dump` handles the paste-a-wall-of-notes case: it splits the dump into pages, facts and events, then runs the *same* understand→gather machinery ingestion uses to find the existing page first — extending it beats creating a near-duplicate. New pages register in `mort_docs` under the same semantic registry key ingestion uses, so chat and ingestion maintain one registry, not two.
 

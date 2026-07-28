@@ -232,6 +232,56 @@ export async function ensureMortSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS mort_pending_by_convo ON mort_pending_actions (conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS mort_pending_by_user ON mort_pending_actions (user_id, created_at);
 
+    -- Universal tool audit (v2 P4, decision V2-5). EVERY tool invocation lands
+    -- here, on every channel, whether it succeeded, failed or was refused by
+    -- the policy tiers. Deliberately a separate table from mort_journal: that
+    -- one is the DECISION journal (what Mort did to the knowledge base and
+    -- why, a handful of rows a day, read as prose in the admin panel), this is
+    -- the CALL journal (every kb_search of every turn, thousands a day). Mixing
+    -- them would bury the decisions under the searches.
+    --
+    -- Arguments are stored as a hash, not verbatim: the audit question is
+    -- "which tool, by whom, on what channel, and did it run" — keeping a second
+    -- copy of every fact and document body in an append-only table answers
+    -- nothing that isn't already answerable and doubles the places that
+    -- content has to be deleted from.
+    CREATE TABLE IF NOT EXISTS mort_tool_calls (
+      id              bigserial PRIMARY KEY,
+      ts              timestamptz NOT NULL DEFAULT now(),
+      tool            text NOT NULL,
+      tier            text NOT NULL,                    -- read | write:memory | write:kb | write:world | admin
+      channel         text NOT NULL,                    -- chat | ingest | dream | admin
+      actor           text NOT NULL DEFAULT 'system',   -- session-derived, never model-supplied
+      conversation_id text,
+      args_hash       text NOT NULL,
+      outcome         text NOT NULL,                    -- ok | error | refused
+      detail          text,                             -- refusal reason / error message, truncated
+      latency_ms      integer NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS mort_tool_calls_ts ON mort_tool_calls (ts DESC);
+    CREATE INDEX IF NOT EXISTS mort_tool_calls_refused ON mort_tool_calls (ts DESC) WHERE outcome = 'refused';
+
+    -- The unified spend ledger (v2 P4, MORT_V2_PLAN Part IV). The daily token
+    -- cap used to be computed from mort_journal.tokens, which only ingest and
+    -- the dream ever wrote — so a chat turn cost nothing as far as the rail was
+    -- concerned, and "widen what Mort can do" quietly widened what he could
+    -- spend. One ledger, every channel.
+    --
+    -- journal_id exists so a journal entry that carries tokens contributes
+    -- exactly once however many times the backfill runs: appendJournal writes
+    -- its own ledger row with the id, and the migration below claims the
+    -- historical ones on the same key.
+    CREATE TABLE IF NOT EXISTS mort_spend (
+      id              bigserial PRIMARY KEY,
+      ts              timestamptz NOT NULL DEFAULT now(),
+      channel         text NOT NULL,
+      actor           text NOT NULL DEFAULT 'system',
+      conversation_id text,
+      model           text,
+      tokens          integer NOT NULL,
+      journal_id      bigint UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS mort_spend_ts ON mort_spend (ts DESC);
     -- Registered MCP servers (v2 P5). Config, not code: a lighting console or
     -- PDU that speaks MCP becomes a row here and its tools join Mort's belt.
     --
@@ -275,6 +325,32 @@ export async function ensureMortSchema(): Promise<void> {
   await backfillSemanticRegistryKeys();
   await backfillJournalOutlineIds();
   await backfillJournalProvenance();
+  await backfillSpendLedger();
+}
+
+/**
+ * v2 P4 migration: seed the spend ledger from the journal rows that already
+ * carry tokens.
+ *
+ * Without it, the day the harness ships every ingest turn run before the
+ * deploy stops counting toward the daily cap, and Mort gets a free second
+ * budget on the changeover day. Idempotent through mort_spend.journal_id —
+ * appendJournal stamps the same key on the rows it writes from now on, so
+ * running this repeatedly (or after new journal rows land) never double-counts.
+ */
+async function backfillSpendLedger(): Promise<void> {
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO mort_spend (ts, channel, actor, conversation_id, model, tokens, journal_id)
+       SELECT j.ts, j.channel, j.actor, j.conversation_id, j.model, j.tokens, j.id
+         FROM mort_journal j
+        WHERE j.tokens IS NOT NULL AND j.tokens > 0
+       ON CONFLICT (journal_id) DO NOTHING`,
+    );
+    if (rowCount) console.log(`[mort] seeded the spend ledger with ${rowCount} historical journal row(s)`);
+  } catch (err) {
+    console.warn("[mort] spend-ledger backfill skipped:", err);
+  }
 }
 
 /**

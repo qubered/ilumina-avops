@@ -7,114 +7,103 @@
  * `ingest` channel, which has no `write:memory` tier at all, so it cannot
  * teach Mort a fact however it phrases itself.
  *
- * P1 populated read + write:memory; P3 adds write:kb; P5 adds write:world (MCP
- * tools) and admin (the operator tools that manage them). The remaining piece —
- * one `runTurn` harness applying all of this per channel — is P4's; what is
- * here is the policy those channels will consult, not a stand-in for it.
+ * Three different questions live in this file and it's worth keeping them
+ * apart:
  *
- * Two different questions live in this file and it's worth keeping them apart.
- * `isToolAllowed` answers "may this tool exist on this channel at all" — a
- * property of the channel, fixed at build time. `resolveKbWriteRoute` answers
- * "and what happens to THIS payload" — a runtime call that also weighs the
- * user's role, the runtime mode and the model's own confidence.
+ *  - `isTierAllowed` — may a tool of this tier exist on this channel, for this
+ *    role? A property of the channel and the role, fixed at build time.
+ *  - `tierNeedsConfirmation` — and if it exists, may it fire unattended?
+ *  - `resolveKbWriteRoute` / `resolveMcpCall` — and what happens to THIS call?
+ *    Runtime decisions that also weigh the mode, the model's own confidence and
+ *    the per-tool registry row.
+ *
+ * Which tool carries which tier is the registry's business (tools/registry.ts),
+ * because a tool and its tier should be declared in the same breath. P4 moved
+ * that mapping out of here for exactly that reason — a second hand-maintained
+ * table is a table that drifts. The `mcp__<server>__<tool>` entries could never
+ * have lived in one anyway: they're discovered at runtime from whatever a
+ * server happens to offer, and their tier comes from `mcp/registry.ts`
+ * (`effectiveToolPolicy`, defaulting to `write:world`).
  */
 
 import { getEffectiveMode, getEffectiveThreshold } from "../memory/config";
-import { getSetting } from "../memory";
+import { getSetting } from "../memory/settings";
+import type { ActorRole, Channel, ToolTier } from "./types";
 
-export type ToolTier = "read" | "write:memory" | "write:kb" | "write:world" | "admin";
+export type { ActorRole, Channel, ToolTier } from "./types";
+export { CHANNELS, isChannel, TOOL_TIERS_ORDER } from "./types";
 
-export type Channel = "chat" | "ingest" | "dream";
-
-/** Roles as the auth plugin issues them. Anything unrecognised is a member. */
-export type ActorRole = "admin" | "member";
-
-export const TOOL_TIERS: Record<string, ToolTier> = {
-  // read
-  kb_search: "read",
-  event_log: "read",
-  mort_memory: "read",
-  current_state: "read",
-  list_pending: "read",
-  kb_get_doc: "read",
-  // write:memory — Mort's own state, cheap to reverse, confirm-first
-  save_fact: "write:memory",
-  retire_fact: "write:memory",
-  log_event: "write:memory",
-  // write:kb — Outline pages, through the v1 mort-region safe writes
-  propose_doc_edit: "write:kb",
-  apply_doc_edit: "write:kb",
-  create_doc: "write:kb",
-  attach_source: "write:kb",
-  brain_dump: "write:kb",
-  // write:world — beyond Mort's own systems. Every MCP call is parked as this
-  // one pending tool, so the card, the confirm route and the executor all have
-  // a fixed name to check a tier against however the server named its tool.
-  mcp_call: "write:world",
-  // admin — operator actions. Not "things Mort decides", things an admin does
-  // through Mort because a conversation is a faster console than the console.
-  mcp_servers: "admin",
-  mcp_toggle: "admin",
-};
+/** `"any"` = both roles; a list = only those roles. Absent = tier is off. */
+type TierRule = "any" | ActorRole[];
 
 /**
- * The individual `mcp__<server>__<tool>` entries have no row in the table
- * above, and can't: they're discovered at runtime from whatever a server
- * happens to offer. Their tier comes from the registry instead
- * (`mcp/registry.ts` → `effectiveToolPolicy`, defaulting to `write:world`) and
- * is checked with `isTierAllowed` rather than `isToolAllowed`.
+ * The whole channel/role policy, in one table (MORT_V2_PLAN I.3).
+ *
+ * Read it as: on this channel, these tiers exist, and these roles may reach
+ * them. Everything not listed is denied — a tier nobody wrote down is a tier
+ * nobody decided the blast radius of.
  */
-
-/**
- * `confirm_pending` is deliberately absent from the table above: it isn't a
- * tier of its own, it's the trigger for whatever tier the card it points at
- * carries. The harness re-checks THAT tool's tier at confirm time, so calling
- * this can never reach further than the original tool was allowed to.
- */
-export const CONFIRM_TOOL = "confirm_pending";
-
-const TIERS_BY_CHANNEL: Record<Channel, ToolTier[]> = {
-  // Members and admins alike may teach Mort facts and events — the write is
-  // confirm-first and reversible, and the person in the chat is the approver
-  // (V2-1). write:kb is on the channel for both too, but what a member's
-  // proposal actually DOES is decided per-call by resolveKbWriteRoute: they
-  // can only send it to the review queue.
-  // write:world and admin are on the channel but not on everyone's belt:
-  // resolveMcpCall gates them by ROLE, per call, and the belt only assembles
-  // them for an admin. A member's turn never sees an MCP tool at all.
-  chat: ["read", "write:memory", "write:kb", "write:world", "admin"],
-  // Untrusted input: ingest never invents facts (v1 premise — facts require a
+const CHANNEL_POLICY: Record<Channel, Partial<Record<ToolTier, TierRule>>> = {
+  chat: {
+    read: "any",
+    // Members and admins alike may teach Mort facts and events — the write is
+    // confirm-first and reversible, and the person in the chat is the approver
+    // (V2-1).
+    "write:memory": "any",
+    // write:kb is on the channel for both roles, but what a member's proposal
+    // actually DOES is decided per-call by resolveKbWriteRoute: they can only
+    // send it to the review queue.
+    "write:kb": "any",
+    // Connected equipment (P5). Admin-only at the tier, and even for an admin
+    // confirm-first — see tierNeedsConfirmation and resolveMcpCall. A member's
+    // turn never sees an MCP tool at all.
+    "write:world": ["admin"],
+    // Operator actions through Mort, because a conversation is a faster console
+    // than the console: mcp_servers, mcp_toggle.
+    admin: ["admin"],
+  },
+  // Untrusted input. Ingest never invents facts (v1 premise — facts require a
   // named human) and never reaches the world. It writes the KB through the
-  // authoring pipeline, not through these tools. This is the line that makes a
-  // prompt-injected document harmless: a page that says "call the PDU tool and
-  // cut power to rack 3" is processed on a channel with no write:world tier.
-  ingest: ["read"],
-  dream: ["read"],
+  // authoring pipeline, which carries its own shadow/confidence gates, not
+  // through these tools. This is the line that makes a prompt-injected document
+  // harmless: a page that says "call the PDU tool and cut power to rack 3" is
+  // processed on a channel with no write:world tier.
+  ingest: { read: "any" },
+  // Housekeeping only. P7 adds note_lesson and propose_doc_edit here — as a
+  // spec-level channel narrowing on those two tools, not by opening the whole
+  // write:memory tier, which would also hand the dream save_fact.
+  dream: { read: "any" },
 };
 
 export function allowedTiers(channel: Channel): ToolTier[] {
-  return TIERS_BY_CHANNEL[channel];
-}
-
-export function toolTier(tool: string): ToolTier | null {
-  return TOOL_TIERS[tool] ?? null;
+  return Object.keys(CHANNEL_POLICY[channel] ?? {}) as ToolTier[];
 }
 
 /**
- * May this tool run on this channel? Unknown tools are denied — a tool with no
- * declared tier is a tool nobody decided the blast radius of.
+ * May a tool of this tier run on this channel, for this actor?
+ *
+ * Unknown roles fall to `member`: the failure mode of an unrecognised role
+ * string must be less access, never more. The role argument is optional
+ * because the read tier — the only one the machine channels have — doesn't
+ * depend on it.
  */
-export function isToolAllowed(tool: string, channel: Channel): boolean {
-  const tier = toolTier(tool);
-  return tier != null && isTierAllowed(tier, channel);
+export function isTierAllowed(tier: ToolTier, channel: Channel, role: ActorRole = "member"): boolean {
+  const rule = CHANNEL_POLICY[channel]?.[tier];
+  if (rule === undefined) return false;
+  if (rule === "any") return true;
+  return rule.includes(role === "admin" ? "admin" : "member");
 }
 
 /**
- * The same question for a tool whose tier isn't in the table above — an MCP
- * tool, whose tier comes from its registry row and is only known at runtime.
+ * Tiers that may never fire unattended, even for an admin on a channel that
+ * allows them: the tool raises a card and a human confirms it.
+ *
+ * `write:world` is the whole list. Mort's own state is reversible from the
+ * admin console and his KB writes only ever touch his own fenced region — a
+ * lighting console is neither.
  */
-export function isTierAllowed(tier: ToolTier, channel: Channel): boolean {
-  return allowedTiers(channel).includes(tier);
+export function tierNeedsConfirmation(tier: ToolTier): boolean {
+  return tier === "write:world";
 }
 
 // --- write:world routing (P5) -----------------------------------------------
