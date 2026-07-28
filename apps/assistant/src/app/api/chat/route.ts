@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type PendingCardRef, type Source } from "@/lib/db";
+import { collectProvenance } from "@/lib/provenance";
 import {
   buildAgentTools,
   buildSystemPrompt,
@@ -155,12 +156,13 @@ export async function POST(req: Request) {
     { role: "user", content: userText },
   ];
 
-  // Persist the user message up front so history survives a dropped stream.
-  await db.insert(messages).values({
-    conversationId,
-    role: "user",
-    content: userText,
-  });
+  // Persist the user message up front so history survives a dropped stream —
+  // and keep its id: a fact taught in this turn is attributed to THIS message,
+  // which is what a provenance chip links back to (P2).
+  const [userMessage] = await db
+    .insert(messages)
+    .values({ conversationId, role: "user", content: userText })
+    .returning({ id: messages.id });
 
   try {
     const result = streamText({
@@ -173,6 +175,7 @@ export async function POST(req: Request) {
       tools: {
         ...buildAgentTools({
           conversationId,
+          messageId: userMessage?.id ?? null,
           user: actingUserFromSession(session),
         }),
         ...stack.providerTools,
@@ -181,12 +184,14 @@ export async function POST(req: Request) {
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
         const pendingCards = collectPendingCards(steps);
+        const provenance = collectProvenance(steps, text);
         await db.insert(messages).values({
           conversationId,
           role: "assistant",
           content: text,
           sources,
           pendingActions: pendingCards.length > 0 ? pendingCards : null,
+          provenance,
         });
         await db
           .update(conversations)

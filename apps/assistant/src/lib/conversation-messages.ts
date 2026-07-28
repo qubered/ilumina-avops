@@ -1,5 +1,5 @@
 import { getPendingStatuses, type PendingStatus } from "@mort/core/memory/pending";
-import type { PendingCardRef, Source } from "./db";
+import type { MessageProvenance, PendingCardRef, Source } from "./db";
 
 /** A confirmation card as the chat renders it: what was shown, plus where it got to. */
 export type ChatCard = PendingCardRef & { status: PendingStatus };
@@ -10,6 +10,8 @@ export type ChatMessage = {
   content: string;
   sources: Source[] | null;
   pendingActions: ChatCard[] | null;
+  /** Who taught the facts this answer leaned on, and when (v2 P2). */
+  provenance: MessageProvenance[] | null;
 };
 
 type MessageRow = {
@@ -18,6 +20,7 @@ type MessageRow = {
   content: string;
   sources: Source[] | null;
   pendingActions: PendingCardRef[] | null;
+  provenance: MessageProvenance[] | null;
 };
 
 /**
@@ -35,6 +38,7 @@ export async function withPendingStatus(rows: MessageRow[]): Promise<ChatMessage
     role: m.role,
     content: m.content,
     sources: m.sources,
+    provenance: m.provenance,
     pendingActions:
       m.pendingActions?.map((card) => ({
         ...card,

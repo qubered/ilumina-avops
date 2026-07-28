@@ -143,6 +143,12 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         approvedBy: by,
         confidence: "approved",
         note: p.note ?? null,
+        // Provenance (P2), all of it from the row and the session — never the
+        // payload. This is what makes "Jayden told me, 23 July, in chat"
+        // answerable later, with a link to the message that said it.
+        taughtVia: "chat",
+        conversationId: action.conversationId,
+        messageId: action.messageId,
       });
 
       const scope = p.scope ? ` (${p.scope})` : "";
@@ -152,8 +158,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
 
       await appendJournal({
         action: "fact_saved",
-        rationale: `${p.factKey} = ${p.value} (chat, told by ${by}${superseded ? `, supersedes #${superseded.id}` : ""})`,
+        rationale: `${p.factKey} = ${p.value} (told by ${by}${superseded ? `, supersedes #${superseded.id}` : ""})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, factId, supersededFactId: superseded?.id ?? null };
     }
@@ -169,8 +178,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         : `${label} was already retired — nothing to do.`;
       await appendJournal({
         action: "fact_retired",
-        rationale: `${label} (chat, retired by ${by})`,
+        rationale: `${label} (retired by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, factId: p.factId };
     }
@@ -192,11 +204,15 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
       };
 
       const before = await getEventHashes(sourceId);
-      await insertEvent(sourceId, row);
+      // Who reported it, and where — the event-log half of P2 provenance.
+      await insertEvent(sourceId, row, { reportedBy: by, conversationId: action.conversationId });
       const known = before.includes(row.rowHash);
       // Pass every hash this source now has: prune reconciles the collection
       // rather than dropping the rows logged earlier in the conversation.
-      await indexEvents(sourceId, known ? [] : [row], known ? before : [...before, row.rowHash]);
+      await indexEvents(sourceId, known ? [] : [row], known ? before : [...before, row.rowHash], {
+        reportedBy: by,
+        conversationId: action.conversationId,
+      });
 
       const summary = known
         ? `Already in the event log: ${p.actionText} (${occurredOn}).`
@@ -204,8 +220,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
       await appendJournal({
         sourceId,
         action: "event_logged",
-        rationale: `${p.actionText} on ${occurredOn} (chat, reported by ${by})`,
+        rationale: `${p.actionText} on ${occurredOn} (reported by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, sourceId, rowHash: row.rowHash };
     }

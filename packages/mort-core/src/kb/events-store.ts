@@ -26,6 +26,14 @@ export type EventPayload = {
   zone: string[];
   system: string[];
   entities: string[];
+  /**
+   * P2 provenance, carried on the point so a hit can be attributed without a
+   * second round trip. Absent on points indexed before P2 and on sheet rows
+   * (whose provenance is the file in `sourceId`) — `mort_events` in Postgres
+   * is the authority either way, so a reader that needs certainty asks it.
+   */
+  reportedBy?: string | null;
+  conversationId?: string | null;
 };
 
 /** Deterministic UUID from (source, row) so re-index updates the same point. */

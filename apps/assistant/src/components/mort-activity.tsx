@@ -34,6 +34,8 @@ function describe(row: MortActivityRow): { verb: string; tone: string } {
       return { verb: "Looked over the whole KB", tone: "text-accent" };
     case "fact_approved":
       return { verb: "Recorded a fact", tone: "text-success" };
+    case "fact_retired":
+      return { verb: "Retired a fact", tone: "text-text-2" };
     case "tombstone":
       return { verb: "Flagged as gone", tone: "text-danger" };
     default:
@@ -137,6 +139,7 @@ function Activity({ journal, outlineUrl }: { journal: MortActivityRow[]; outline
                 {row.sourceId && <p className="mt-0.5 text-[12px] text-text-3">from {row.sourceId}</p>}
                 {row.rationale && <p className="mt-1 text-text-2">{row.rationale}</p>}
                 <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-text-3">
+                  <Attribution row={row} />
                   {row.confidence != null && <span>{Math.round(row.confidence * 100)}% sure</span>}
                   {row.tokens ? <span>{row.tokens.toLocaleString()} tokens</span> : null}
                   {row.model && <span>{row.model}</span>}
@@ -147,6 +150,38 @@ function Activity({ journal, outlineUrl }: { journal: MortActivityRow[]; outline
         </ul>
       )}
     </section>
+  );
+}
+
+const CHANNEL_LABEL: Record<MortActivityRow["channel"], string> = {
+  chat: "in chat",
+  ingest: "from the watch folder",
+  dream: "while dreaming",
+  admin: "in the admin console",
+};
+
+/**
+ * Who was behind an entry, and through which door (v2 P2). "On his own" is the
+ * honest rendering of actor 'system': nobody asked, Mort decided — which is
+ * exactly the row a reader of an audit log wants to spot.
+ */
+function Attribution({ row }: { row: MortActivityRow }) {
+  const who = row.actor === "system" ? "on his own" : row.actor;
+  return (
+    <span>
+      {who} · {CHANNEL_LABEL[row.channel] ?? row.channel}
+      {row.conversationId && (
+        <>
+          {" · "}
+          <a
+            href={`/c/${row.conversationId}`}
+            className="underline decoration-divider underline-offset-2 hover:decoration-text-3"
+          >
+            conversation
+          </a>
+        </>
+      )}
+    </span>
   );
 }
 

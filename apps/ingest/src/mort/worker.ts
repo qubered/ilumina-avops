@@ -209,6 +209,7 @@ export async function runDream(): Promise<{ raised: number; skipped: number; rec
     rationale: `looked at ${library.length} file(s) and ${docs.length} page(s) — re-checked ${rechecked} held, raised ${raised} new of ${valid.length}`,
     tokens,
     model: env.INGEST_AI_PROVIDER,
+    channel: "dream",
   });
   console.log(
     `[mort] dreamt over ${library.length} file(s) and ${docs.length} page(s) — ${raised} new proposal(s), ${valid.length - raised} already known`,
