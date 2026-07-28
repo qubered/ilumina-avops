@@ -1,8 +1,8 @@
 import type { Tool } from "ai";
 import { recordToolCall, type ToolOutcome } from "../memory/tool-journal";
 import type { ActingUser } from "../agent/pending-actions";
-import { isTierAllowed, tierNeedsConfirmation } from "./policy";
-import type { ActorRole, Channel } from "./types";
+import { isTierAllowed, isTierOnSurface, tierNeedsConfirmation } from "./policy";
+import type { ActorRole, Channel, Surface } from "./types";
 // Type-only: the registry imports this module, so importing it back for a
 // value would close the loop at module-eval time. Same for the two machine
 // channels' turn state.
@@ -30,6 +30,13 @@ import type { DreamTurnState } from "../agent/dream-tools";
 /** Everything a turn's tools are built and judged against. */
 export type ToolContext = {
   channel: Channel;
+  /**
+   * Where the conversation is being had (P8). Set by the route from how the
+   * request arrived, never from the message — a widget claiming to be the full
+   * app would be claiming a wider belt. Absent means the full app, which is
+   * what the machine channels want.
+   */
+  surface?: Surface;
   /** From the session on chat; null on the machine channels. NEVER model-supplied. */
   user: ActingUser | null;
   conversationId: string | null;
@@ -75,6 +82,11 @@ async function refusalReason(spec: ToolSpec, ctx: ToolContext): Promise<string |
     return `${spec.name} is a ${spec.tier} tool and the ${ctx.channel} channel does not permit that${
       ctx.user ? ` for a ${roleOf(ctx)}` : ""
     }. Nothing was done.`;
+  }
+  if (!isTierOnSurface(spec.tier, ctx.surface)) {
+    // Written to be repeated: the person is in the widget and the answer they
+    // need is "do this in the full app", not "you may not do this".
+    return `${spec.name} needs the full app — the compact panel can read and remember things, but not this. Tell them to open the app from the panel's corner link. Nothing was done.`;
   }
   if (spec.requiresUser && !ctx.user) {
     return `${spec.name} writes on a named person's behalf and this turn has no acting user. Nothing was done.`;

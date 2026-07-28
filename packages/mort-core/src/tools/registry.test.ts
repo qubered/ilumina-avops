@@ -63,6 +63,16 @@ vi.mock("../agent/read-tools", () => ({
   eventLogTool: fake(),
   mortMemoryTool: fake(),
   currentStateTool: fake(),
+  changeDigestTool: fake(),
+}));
+// P8's operator tier. What each of them decides is admin-tools' own business;
+// here they only have to exist so the registry can put them on an admin's belt.
+vi.mock("../agent/admin-tools", () => ({
+  reviewQueueTool: fake,
+  mortStatusTool: fake,
+  decideReviewTool: fake,
+  setModeTool: fake,
+  ADMIN_RULES: "",
 }));
 vi.mock("../agent/memory-tools", () => ({
   saveFactTool: fake,
@@ -140,9 +150,11 @@ describe("belt assembly", () => {
       [
         "attach_source",
         "brain_dump",
+        "change_digest",
         "confirm_pending",
         "create_doc",
         "current_state",
+        "decide_review",
         "event_log",
         "kb_get_doc",
         "kb_search",
@@ -151,9 +163,12 @@ describe("belt assembly", () => {
         "mcp_servers",
         "mcp_toggle",
         "mort_memory",
+        "mort_status",
         "propose_doc_edit",
         "retire_fact",
+        "review_queue",
         "save_fact",
+        "set_mode",
       ].sort(),
     );
   });
@@ -166,8 +181,13 @@ describe("belt assembly", () => {
     const belt = await buildBelt(ctx({ user: member }));
     expect(Object.keys(belt)).toContain("propose_doc_edit");
     expect(Object.keys(belt)).toContain("save_fact");
-    expect(Object.keys(belt)).not.toContain("mcp_servers");
-    expect(Object.keys(belt)).not.toContain("mcp_toggle");
+    // "What's changed this week?" is read, and knowing what moved in the wiki
+    // is not operator business — a crew member back from a week off is exactly
+    // who wants it (P8).
+    expect(Object.keys(belt)).toContain("change_digest");
+    for (const tool of ["mcp_servers", "mcp_toggle", "review_queue", "decide_review", "set_mode", "mort_status"]) {
+      expect(Object.keys(belt)).not.toContain(tool);
+    }
   });
 
   it("hands the ingest channel the read tools plus its own authoring tools (P6)", async () => {
@@ -229,6 +249,54 @@ describe("belt assembly", () => {
     // Q&A and teaching are untouched — that's the point of a separate switch.
     expect(Object.keys(belt)).toContain("kb_search");
     expect(Object.keys(belt)).toContain("save_fact");
+  });
+
+  it("gives the compact widget read and teach, and nothing that writes further (P8)", async () => {
+    // Widget parity: the panel beside the wiki can answer and can be taught,
+    // but a page diff has nowhere to render in a few hundred pixels — and
+    // confirming a change nobody can see is not a confirmation.
+    const belt = await buildBelt(ctx({ surface: "widget" }));
+    for (const tool of ["kb_search", "current_state", "change_digest", "save_fact", "log_event", "confirm_pending"]) {
+      expect(Object.keys(belt)).toContain(tool);
+    }
+    for (const tool of [
+      "propose_doc_edit",
+      "create_doc",
+      "attach_source",
+      "brain_dump",
+      "review_queue",
+      "decide_review",
+      "set_mode",
+      "mcp_toggle",
+    ]) {
+      expect(Object.keys(belt)).not.toContain(tool);
+    }
+  });
+
+  it("narrows on the widget even for an admin, and never widens", async () => {
+    // The surface takes tiers away and cannot hand any back: an admin in the
+    // panel gets a member's reach plus nothing, and a member in the full app
+    // does not gain the operator tier by being there.
+    const widgetAdmin = Object.keys(await buildBelt(ctx({ surface: "widget" })));
+    const appMember = Object.keys(await buildBelt(ctx({ user: member })));
+    expect(widgetAdmin).not.toContain("decide_review");
+    expect(appMember).not.toContain("decide_review");
+    expect(isToolAllowed("propose_doc_edit", "chat", "admin", "widget")).toBe(false);
+    expect(isToolAllowed("propose_doc_edit", "chat", "admin", "app")).toBe(true);
+    // Omitting the surface asks the question the way every caller before P8
+    // asked it — the machine channels have no surface at all.
+    expect(isToolAllowed("propose_doc_edit", "chat", "admin")).toBe(true);
+  });
+
+  it("refuses a wiki tool smuggled onto a widget turn, and logs it", async () => {
+    // Belt-and-braces, exactly as for the channel rule: the harness re-checks
+    // the surface at CALL time, so a tool reaching a belt some other way is
+    // still policed.
+    const spec = TOOL_SPECS.find((s) => s.name === "propose_doc_edit")!;
+    const result = await call(harness(spec, fake(), ctx({ surface: "widget" })), { targetDocId: "d1" });
+
+    expect(result.error).toMatch(/full app/i);
+    expect(journaled[0]).toMatchObject({ tool: "propose_doc_edit", outcome: "refused" });
   });
 
   it("leaves the write tools off a turn with no acting user", async () => {

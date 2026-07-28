@@ -1,6 +1,7 @@
 import { env } from "../env";
 import { countPendingActionsToday, createPendingAction, type PendingTool } from "../memory/pending";
 import type { DiffLine } from "../kb/diff";
+import type { Surface } from "../tools/types";
 import type { ActingUser } from "./pending-actions";
 
 /**
@@ -14,6 +15,14 @@ import type { ActingUser } from "./pending-actions";
 /** Everything a write tool needs that the model must not be able to supply. */
 export type ChatToolContext = {
   conversationId: string | null;
+  /**
+   * Which chat surface the turn is on (P8). Carried here for `confirm_pending`
+   * alone: that tool is `read` — it has to be, since it inherits the tier of
+   * whatever card it points at — so the surface narrowing that keeps the wiki
+   * tools off the widget's belt would otherwise be walked straight around by
+   * someone typing "yes" at a card raised in the full app.
+   */
+  surface?: Surface;
   /**
    * The user message this turn is answering (P2). A fact taught here is
    * attributed to the message that said it, so an answer citing the fact can

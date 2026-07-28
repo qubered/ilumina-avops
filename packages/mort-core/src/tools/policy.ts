@@ -28,10 +28,10 @@
 
 import { getEffectiveMode, getEffectiveThreshold } from "../memory/config";
 import { getSetting } from "../memory/settings";
-import type { ActorRole, Channel, ToolTier } from "./types";
+import type { ActorRole, Channel, Surface, ToolTier } from "./types";
 
-export type { ActorRole, Channel, ToolTier } from "./types";
-export { CHANNELS, isChannel, TOOL_TIERS_ORDER } from "./types";
+export type { ActorRole, Channel, Surface, ToolTier } from "./types";
+export { CHANNELS, isChannel, isSurface, SURFACES, TOOL_TIERS_ORDER } from "./types";
 
 /** `"any"` = both roles; a list = only those roles. Absent = tier is off. */
 type TierRule = "any" | ActorRole[];
@@ -96,6 +96,35 @@ export function isTierAllowed(tier: ToolTier, channel: Channel, role: ActorRole 
   if (rule === undefined) return false;
   if (rule === "any") return true;
   return rule.includes(role === "admin" ? "admin" : "member");
+}
+
+/**
+ * Which tiers each surface carries (MORT_V2_PLAN Part II).
+ *
+ * `app` lists no tiers because it takes nothing away — the full app is the
+ * surface the channel policy above was written for. `widget` is the narrowing:
+ * a panel in an Outline sidebar where a person can read, ask, and teach Mort a
+ * fact or an event, but where a page diff has nowhere to render and no room for
+ * the "open the page" link that makes it reviewable. Confirming a wiki change
+ * you cannot actually see is not a confirmation.
+ *
+ * A surface can only ever REMOVE tiers. There is no entry here that grants
+ * something the channel policy withholds, and `isToolAllowed` asks both.
+ */
+const SURFACE_TIERS: Partial<Record<Surface, ToolTier[]>> = {
+  widget: ["read", "write:memory"],
+};
+
+/**
+ * May a tool of this tier be reached from this surface?
+ *
+ * Defaults to the full app: a caller that doesn't say where the conversation is
+ * happening gets the belt the channel policy already decided on, which is what
+ * the machine channels (no surface at all) and every existing caller need.
+ */
+export function isTierOnSurface(tier: ToolTier, surface: Surface = "app"): boolean {
+  const tiers = SURFACE_TIERS[surface];
+  return tiers === undefined || tiers.includes(tier);
 }
 
 /**

@@ -18,6 +18,12 @@ const TOOL_LABEL: Record<string, string> = {
   save_fact: "fact",
   retire_fact: "retire",
   log_event: "event",
+  apply_doc_edit: "page edit",
+  create_doc: "new page",
+  attach_source: "attach",
+  mcp_call: "equipment",
+  decide_review: "review",
+  set_mode: "mode",
 };
 
 export function MortPendingActions({ actions }: { actions: MortPendingAction[] }) {

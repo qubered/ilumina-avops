@@ -35,5 +35,27 @@ export function isChannel(v: unknown): v is Channel {
   return typeof v === "string" && (CHANNELS as string[]).includes(v);
 }
 
+/**
+ * Where a chat turn is being had (MORT_V2_PLAN Part II, "widget parity").
+ *
+ * The channel says a conversation is happening; the surface says how much of
+ * the conversation the person can actually see. The compact widget is a panel
+ * inside an Outline iframe — a few hundred pixels with no room for a page diff
+ * and nowhere to put the "open the page" link that makes one reviewable. So the
+ * widget gets read and teach, and the wiki tools stay in the full app.
+ *
+ * This is a narrowing, never a widening: a surface can only take tiers away.
+ * A turn that doesn't say which surface it is on is treated as the full app,
+ * which is what every non-chat caller wants and what the ingest and dream
+ * channels — which have no surface at all — need to keep their belts.
+ */
+export type Surface = "app" | "widget";
+
+export const SURFACES: Surface[] = ["app", "widget"];
+
+export function isSurface(v: unknown): v is Surface {
+  return typeof v === "string" && (SURFACES as string[]).includes(v);
+}
+
 /** Roles as the auth plugin issues them. Anything unrecognised is a member. */
 export type ActorRole = "admin" | "member";

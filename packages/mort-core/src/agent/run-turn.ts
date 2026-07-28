@@ -8,7 +8,8 @@ import { buildBelt } from "../tools/registry";
 import type { ToolContext } from "../tools/harness";
 import { actorLabelOf } from "../tools/harness";
 import type { Channel } from "../tools/types";
-import { buildSystemPrompt, chatCanWriteKb, chatHasMcpTools } from "./prompt";
+import { buildSystemPrompt, chatCanWriteKb, chatHasAdminTools, chatHasMcpTools } from "./prompt";
+import type { Surface } from "../tools/types";
 import type { ActingUser } from "./pending-actions";
 import {
   hasDecided,
@@ -61,6 +62,14 @@ export type TurnEntry =
 
 export type TurnContext = {
   channel: Channel;
+  /**
+   * Which chat surface this turn is being had on (P8). Set by the route from
+   * how the request arrived — never from the message, since a widget claiming
+   * to be the full app would be claiming a wider belt. Absent means the full
+   * app, which is what the machine channels want and what every caller before
+   * P8 meant.
+   */
+  surface?: Surface;
   /**
    * Attribution source. A session user on chat; the literal `"system"` on the
    * machine channels. NEVER model-supplied — that is the whole point of it
@@ -125,12 +134,14 @@ const actingUser = (actor: TurnContext["actor"]): ActingUser | null => (actor ==
  * reasons — an admin whose only enabled MCP server is unreachable gets no
  * connected tools this turn.
  */
-async function systemFor(entry: TurnEntry, tools: ToolSet): Promise<string> {
+async function systemFor(entry: TurnEntry, tools: ToolSet, ctx: TurnContext): Promise<string> {
   if (entry.kind === "ingest") return `${MORT_AUTHORING_PREAMBLE}\n\n${INGEST_INSTRUCTIONS}`;
   if (entry.kind === "dream") return `${MORT_AUTHORING_PREAMBLE}\n\n${DREAM_INSTRUCTIONS}`;
   return buildSystemPrompt({
-    canWriteKb: await chatCanWriteKb(),
+    canWriteKb: chatCanWriteKb(tools),
     hasMcpTools: chatHasMcpTools(tools),
+    hasAdminTools: chatHasAdminTools(tools),
+    surface: ctx.surface,
   });
 }
 
@@ -158,6 +169,7 @@ export async function prepareTurn(entry: TurnEntry, ctx: TurnContext): Promise<T
   const user = actingUser(ctx.actor);
   const toolContext: ToolContext = {
     channel: ctx.channel,
+    surface: ctx.surface,
     user,
     conversationId: ctx.conversationId ?? null,
     messageId: ctx.messageId ?? null,
@@ -183,7 +195,7 @@ export async function prepareTurn(entry: TurnEntry, ctx: TurnContext): Promise<T
     getMaxSteps(ctx.channel),
     rail.exceeded(),
   ]);
-  const system = await systemFor(entry, tools);
+  const system = await systemFor(entry, tools, ctx);
 
   return {
     channel: ctx.channel,

@@ -9,6 +9,12 @@ import { Chat } from "./chat";
  * fresh conversation by remounting Chat (which clears its conversation id).
  * Widget conversations are normal conversations — they show up in the full
  * app's sidebar and can be resumed there.
+ *
+ * `surface="widget"` is the one thing that differs (v2 P8): the panel can read
+ * and it can teach — facts and events raise the same confirmation cards the app
+ * does — but the wiki tools are off its belt, because a page diff has nowhere
+ * to render here and confirming a change you cannot see is not a confirmation.
+ * A page fix opens in the full app, one click away in the corner.
  */
 export function WidgetChat({ appUrl }: { appUrl: string }) {
   const [sessionKey, setSessionKey] = useState(0);
@@ -50,6 +56,7 @@ export function WidgetChat({ appUrl }: { appUrl: string }) {
           conversationId={null}
           initialMessages={[]}
           compact
+          surface="widget"
         />
       </div>
     </div>

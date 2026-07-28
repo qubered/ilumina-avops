@@ -3,10 +3,12 @@ import type { ChatToolContext } from "../agent/cards";
 import {
   buildKbGetDocTool,
   buildKbSearchTool,
+  changeDigestTool,
   currentStateTool,
   eventLogTool,
   mortMemoryTool,
 } from "../agent/read-tools";
+import { decideReviewTool, mortStatusTool, reviewQueueTool, setModeTool } from "../agent/admin-tools";
 import {
   confirmPendingTool,
   listPendingTool,
@@ -26,9 +28,9 @@ import {
 } from "../agent/ingest-tools";
 import { finishDreamTool, raiseProposalTool } from "../agent/dream-tools";
 import { buildMcpAdminTools, buildMcpTools, mcpTools } from "../mcp";
-import { chatWritesEnabled, isTierAllowed } from "./policy";
+import { chatWritesEnabled, isTierAllowed, isTierOnSurface } from "./policy";
 import { harness, type ToolContext } from "./harness";
-import type { ActorRole, Channel, ToolTier } from "./types";
+import type { ActorRole, Channel, Surface, ToolTier } from "./types";
 
 /**
  * The unified tool belt (MORT_V2_PLAN I.3, decision V2-5).
@@ -81,6 +83,7 @@ export type ToolSpec = {
  */
 const chatCtx = (ctx: ToolContext): ChatToolContext => ({
   conversationId: ctx.conversationId,
+  surface: ctx.surface,
   messageId: ctx.messageId ?? null,
   user: ctx.user!,
   seen: ctx.seen,
@@ -97,6 +100,9 @@ export const TOOL_SPECS: ToolSpec[] = [
   { name: "event_log", tier: "read", build: () => eventLogTool },
   { name: "mort_memory", tier: "read", build: () => mortMemoryTool },
   { name: "current_state", tier: "read", build: () => currentStateTool },
+  // "What's changed this week?" (P8). Reads the same digest the admin activity
+  // panel renders, so the two can't disagree about the same window.
+  { name: "change_digest", tier: "read", channels: ["chat"], build: () => changeDigestTool },
   { name: "list_pending", tier: "read", requiresUser: true, build: (ctx) => listPendingTool(chatCtx(ctx)) },
   { name: "confirm_pending", tier: "read", requiresUser: true, build: (ctx) => confirmPendingTool(chatCtx(ctx)) },
 
@@ -163,12 +169,33 @@ export const TOOL_SPECS: ToolSpec[] = [
   { name: "raise_proposal", tier: "write:kb", channels: ["dream"], build: raiseProposalTool },
   { name: "finish_dream", tier: "read", channels: ["dream"], build: finishDreamTool },
 
-  // --- admin — the console, in chat form (P5) ------------------------------
+  // --- admin — the console, in chat form (P5, P8) --------------------------
   //
   // Not "things Mort decides", things an admin does through Mort because a
-  // conversation is a faster console than the console. Built as a pair by
-  // buildMcpAdminTools and picked apart here so each is a registered tool with
-  // its own row in the tier table.
+  // conversation is a faster console than the console.
+  //
+  // The queue is on this tier rather than `read` deliberately: what Mort tried
+  // to do and was stopped from doing is operator state, not crew reading. And
+  // the two deciders park a card like every other write tool — an admin saying
+  // "reject that one" gets a card naming the proposal, not a rejection.
+  { name: "review_queue", tier: "admin", channels: ["chat"], requiresUser: true, build: () => reviewQueueTool() },
+  { name: "mort_status", tier: "admin", channels: ["chat"], requiresUser: true, build: () => mortStatusTool() },
+  {
+    name: "decide_review",
+    tier: "admin",
+    channels: ["chat"],
+    requiresUser: true,
+    build: (ctx) => decideReviewTool(chatCtx(ctx)),
+  },
+  {
+    name: "set_mode",
+    tier: "admin",
+    channels: ["chat"],
+    requiresUser: true,
+    build: (ctx) => setModeTool(chatCtx(ctx)),
+  },
+  // Built as a pair by buildMcpAdminTools and picked apart here so each is a
+  // registered tool with its own row in the tier table.
   {
     name: "mcp_servers",
     tier: "admin",
@@ -217,23 +244,32 @@ export function toolTier(name: string): ToolTier | null {
 }
 
 /**
- * May this tool run on this channel, for this role?
+ * May this tool run on this channel, for this role, from this surface?
  *
  * Unknown tools are denied — a tool with no declared tier is a tool nobody
  * decided the blast radius of. This is the question the harness asks at call
  * time; `buildBelt` asks it (plus the kill switches) at assembly time.
+ *
+ * The surface is the last of the three and can only narrow (tools/policy.ts):
+ * omitting it asks the question the way every caller before P8 asked it.
  */
-export function isToolAllowed(name: string, channel: Channel, role: ActorRole = "member"): boolean {
+export function isToolAllowed(
+  name: string,
+  channel: Channel,
+  role: ActorRole = "member",
+  surface?: Surface,
+): boolean {
   const tier = toolTier(name);
   if (tier == null) return false;
   const spec = toolSpec(name);
   if (spec?.channels && !spec.channels.includes(channel)) return false;
+  if (!isTierOnSurface(tier, surface)) return false;
   return isTierAllowed(tier, channel, role);
 }
 
 /** Tools this channel/role could reach, before the runtime kill switches. */
-export function toolsForChannel(channel: Channel, role: ActorRole = "member"): ToolSpec[] {
-  return TOOL_SPECS.filter((s) => isToolAllowed(s.name, channel, role));
+export function toolsForChannel(channel: Channel, role: ActorRole = "member", surface?: Surface): ToolSpec[] {
+  return TOOL_SPECS.filter((s) => isToolAllowed(s.name, channel, role, surface));
 }
 
 /**
@@ -248,7 +284,7 @@ export async function buildBelt(ctx: ToolContext): Promise<ToolSet> {
   const role: ActorRole = ctx.user?.role ?? "member";
   const belt: ToolSet = {};
   for (const spec of TOOL_SPECS) {
-    if (!isToolAllowed(spec.name, ctx.channel, role)) continue;
+    if (!isToolAllowed(spec.name, ctx.channel, role, ctx.surface)) continue;
     if (spec.requiresUser && !ctx.user) continue;
     if (spec.enabled && !(await spec.enabled(ctx))) continue;
     belt[spec.name] = harness(spec, spec.build(ctx), ctx);
@@ -275,6 +311,10 @@ async function discoveredTools(
   role: ActorRole,
 ): Promise<Array<[string, ToolSpec, ToolSet[string]]>> {
   if (ctx.channel !== "chat" || !ctx.user) return [];
+  // Checked before the discovery rather than after it: `buildMcpTools` reaches
+  // out to every enabled server, and doing that to build a belt the surface is
+  // about to empty is a network round trip spent on nothing.
+  if (!isTierOnSurface("write:world", ctx.surface)) return [];
   const built = await buildMcpTools(chatCtx(ctx), ctx.channel);
   if (Object.keys(built).length === 0) return [];
 
@@ -285,7 +325,7 @@ async function discoveredTools(
     // — the most cautious answer, and the same default a server's tools get
     // before an admin has said anything about them.
     const tier = tiers.get(name) ?? "write:world";
-    if (!isTierAllowed(tier, ctx.channel, role)) continue;
+    if (!isTierAllowed(tier, ctx.channel, role) || !isTierOnSurface(tier, ctx.surface)) continue;
     out.push([name, { name, tier, channels: ["chat"], requiresUser: true, build: () => tool }, tool]);
   }
   return out;

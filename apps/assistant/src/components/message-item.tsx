@@ -118,10 +118,27 @@ function chipHref(chip: MessageProvenance): string | null {
   return null;
 }
 
+/**
+ * Fact keys are stored as slugs so they can be matched exactly
+ * ("led-wall-height"); nobody says them that way. The chip shows the words.
+ */
+function chipSubject(chip: MessageProvenance): string {
+  const subject = chip.kind === "fact" ? chip.subject.replace(/[-_]+/g, " ") : chip.subject;
+  return subject.length > 42 ? `${subject.slice(0, 41).trimEnd()}…` : subject;
+}
+
+/**
+ * Who and when — the second half of the chip.
+ *
+ * The subject leads (see chipSubject) because without it three facts taught by
+ * the same person on the same afternoon render as three identical chips, and a
+ * row of "Jayden told me · 23 Jul" tells a reader nothing about which claim in
+ * the answer each one is standing behind.
+ */
 function chipLabel(chip: MessageProvenance): string {
   const when = formatProvenanceDate(chip.when);
-  const who = chip.who ? `${chip.who} told me` : chip.sourceId ? `From ${chip.sourceId}` : "Recorded";
-  return [who, when].filter(Boolean).join(" · ");
+  const who = chip.who ? `${chip.who} told me` : chip.sourceId ? `from ${chip.sourceId}` : "recorded";
+  return [who, when].filter(Boolean).join(", ");
 }
 
 /** Speech-bubble glyph — this is knowledge somebody said, not a page. */
@@ -138,15 +155,22 @@ function ProvenanceChips({ chips, compact }: { chips: MessageProvenance[]; compa
     <div className="mt-3 flex flex-wrap gap-1.5">
       {chips.map((chip, i) => {
         const href = chipHref(chip);
-        const title = `${chip.kind === "fact" ? chip.subject : "Logged"}${chip.value ? ` = ${chip.value}` : ""}${
-          chip.via === "chat" ? " — taught in chat" : chip.via === "admin" ? " — approved in the admin console" : ""
-        }`;
+        const title = [
+          `${chip.kind === "fact" ? chip.subject : "Logged"}${chip.value ? ` = ${chip.value}` : ""}`,
+          chipLabel(chip),
+          chip.via === "chat" ? "taught in chat" : chip.via === "admin" ? "approved in the admin console" : null,
+        ]
+          .filter(Boolean)
+          .join(" — ");
         const body = (
           <>
             <span className="text-text-3">
               <ToldIcon />
             </span>
-            <span className="truncate">{chipLabel(chip)}</span>
+            <span className="truncate">{chipSubject(chip)}</span>
+            {/* The panel is a narrow column; the attribution stays on the
+                tooltip there rather than pushing the subject out of view. */}
+            {!compact && <span className="shrink-0 text-text-3">{chipLabel(chip)}</span>}
           </>
         );
         const className = `flex max-w-full items-center gap-1.5 rounded-full border border-divider bg-menu px-2 py-0.5 text-[11px] text-text-2 ${

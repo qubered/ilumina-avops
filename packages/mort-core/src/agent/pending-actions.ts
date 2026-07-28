@@ -2,8 +2,10 @@ import { z } from "zod";
 import { chatSourceId, recordChatProvenance } from "../kb/chat-write";
 import { chatEventRowHash, chatEventSourceId, indexEvents } from "../kb/events-index";
 import { getSelfUserId } from "../kb/outline";
+import { decideReviewItem } from "../kb/review";
 import { buildWriteDeps } from "../kb/write-deps";
 import { writeMortRegion } from "../kb/writer";
+import { getEffectiveMode, setMode } from "../memory/config";
 import {
   appendJournal,
   getEventHashes,
@@ -113,6 +115,29 @@ export const mcpCallPayload = z.object({
   drifted: z.boolean().nullish(),
 });
 
+/**
+ * admin payloads (P8). Operator actions taken through a conversation.
+ *
+ * Both carry a snapshot of what the card described — the proposal's action and
+ * title, the mode it is moving away from — so the card still reads the same
+ * tomorrow, when the queue has moved on and the mode may have changed again.
+ * The snapshot is display only: the executor re-reads the row and the current
+ * mode, and decides against those.
+ */
+export const decideReviewPayload = z.object({
+  reviewId: z.number().int().positive(),
+  decision: z.enum(["approve", "reject"]),
+  /** What the proposal was, as the card showed it. */
+  action: z.string().max(80).nullish(),
+  title: z.string().max(300).nullish(),
+});
+
+export const setModePayload = z.object({
+  mode: z.enum(["off", "shadow", "live"]),
+  /** The mode at the time the card was raised. */
+  from: z.enum(["off", "shadow", "live"]).nullish(),
+});
+
 export const PAYLOAD_SCHEMAS = {
   save_fact: saveFactPayload,
   retire_fact: retireFactPayload,
@@ -121,6 +146,8 @@ export const PAYLOAD_SCHEMAS = {
   create_doc: createDocPayload,
   attach_source: attachSourcePayload,
   mcp_call: mcpCallPayload,
+  decide_review: decideReviewPayload,
+  set_mode: setModePayload,
 } satisfies Record<PendingTool, z.ZodType>;
 
 export type SaveFactPayload = z.infer<typeof saveFactPayload>;
@@ -130,6 +157,8 @@ export type ApplyDocEditPayload = z.infer<typeof applyDocEditPayload>;
 export type CreateDocPayload = z.infer<typeof createDocPayload>;
 export type AttachSourcePayload = z.infer<typeof attachSourcePayload>;
 export type McpCallPayload = z.infer<typeof mcpCallPayload>;
+export type DecideReviewPayload = z.infer<typeof decideReviewPayload>;
+export type SetModePayload = z.infer<typeof setModePayload>;
 
 /** Today, as an ISO date, in the venue's local reckoning. */
 export function today(): string {
@@ -192,8 +221,29 @@ export function previewFor(tool: PendingTool, payload: Record<string, unknown>, 
       const args = Object.keys(p.args ?? {}).length ? ` with ${JSON.stringify(p.args)}` : " with no arguments";
       return `Run ${p.server}.${p.tool}${args}`;
     }
+    // The operator previews name the CONSEQUENCE, not the switch: "approve
+    // proposal #12" tells an admin nothing they can check, and "shadow mode"
+    // means nothing to anyone who hasn't read the admin page this month.
+    case "decide_review": {
+      const p = payload as DecideReviewPayload;
+      const what = p.title ?? p.action ?? `proposal #${p.reviewId}`;
+      return p.decision === "approve"
+        ? `Approve #${p.reviewId} — ${what} — and carry it out now`
+        : `Reject #${p.reviewId} — ${what}. Nothing is written; the file stays in the library.`;
+    }
+    case "set_mode": {
+      const p = payload as SetModePayload;
+      const from = p.from && p.from !== p.mode ? ` (from ${p.from})` : "";
+      return `Switch Mort to ${p.mode} mode${from} — ${MODE_CONSEQUENCE[p.mode]}`;
+    }
   }
 }
+
+const MODE_CONSEQUENCE: Record<SetModePayload["mode"], string> = {
+  off: "he stops filing arriving files entirely",
+  shadow: "every KB write becomes a review-queue proposal, admins included",
+  live: "he writes confident changes himself; unsure ones still go to review",
+};
 
 export type ExecutionResult = {
   /** One line for the conversation and the journal — what actually happened. */
@@ -482,6 +532,61 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
           ? `Ran ${label} — ${result.text || "no output"}. Confirmed by ${by}.`
           : `${label} failed: ${result.text} Nothing else was attempted.`,
       };
+    }
+
+    // --- admin (P8) -------------------------------------------------------
+    //
+    // The console's two operations, reached through a conversation. Note that
+    // neither trusts the snapshot on the card: `decideReviewItem` re-reads the
+    // queue row and refuses one that has already been decided, and `setMode`
+    // reads the mode back rather than assuming the card's `from` still holds.
+    // A card can sit on someone's screen for a day.
+
+    case "decide_review": {
+      const p = decideReviewPayload.parse(action.payload);
+      const outcome = await decideReviewItem(p.reviewId, p.decision, {
+        decidedBy: by,
+        channel: "chat",
+        conversationId: action.conversationId,
+      });
+      if (!outcome.ok) {
+        // Throwing hands the card back to `pending`, so the two failures are
+        // told apart by whether trying again could work. An executor that fell
+        // over left the proposal queued — that IS retryable. A proposal that is
+        // gone, or that somebody else already answered, is not: handing that
+        // card back would just invite an admin to decide it a second time.
+        if (outcome.reason === "execute_failed") throw new Error(outcome.message);
+        return { summary: outcome.message };
+      }
+      if (outcome.status === "rejected") {
+        return {
+          summary: `Rejected proposal #${p.reviewId}${p.title ? ` — ${p.title}` : ""}. Nothing was written; the file stays in the library. Decided by ${by}.`,
+        };
+      }
+      return {
+        summary: `Approved proposal #${p.reviewId}${p.title ? ` — ${p.title}` : ""}: ${outcome.executed} in the wiki. Decided by ${by}.`,
+        docId: outcome.docId || undefined,
+        docUrl: outcome.docUrl ?? undefined,
+      };
+    }
+
+    case "set_mode": {
+      const p = setModePayload.parse(action.payload);
+      const before = await getEffectiveMode();
+      if (before === p.mode) {
+        return { summary: `Mort was already in ${p.mode} mode — nothing changed.` };
+      }
+      await setMode(p.mode);
+      await appendJournal({
+        action: `mode:${p.mode}`,
+        rationale: `authoring mode ${before} → ${p.mode}, from chat (confirmed by ${by})`,
+        confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
+      });
+      console.log(`[mort] mode set to ${p.mode} from chat by ${by}`);
+      return { summary: `Mort is now in ${p.mode} mode (was ${before}) — ${MODE_CONSEQUENCE[p.mode]}. Switched by ${by}.` };
     }
   }
 }

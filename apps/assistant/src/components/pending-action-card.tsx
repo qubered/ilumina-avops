@@ -44,6 +44,7 @@ const TITLES: Record<string, string> = {
   create_doc: "Write this page?",
   attach_source: "Attach this file?",
   mcp_call: "Run this on the gear?",
+  set_mode: "Change how Mort operates?",
 };
 
 /**
@@ -57,6 +58,34 @@ const WORLD_TOOLS = new Set(["mcp_call"]);
 /** A wiki change can be handed to an admin instead of applied (P3). */
 const KB_TOOLS = new Set(["apply_doc_edit", "create_doc", "attach_source"]);
 
+/** Operator actions taken through the conversation (P8). */
+const ADMIN_TOOLS = new Set(["decide_review", "set_mode"]);
+
+/**
+ * The heading. Mostly a lookup, except for `decide_review` — approving and
+ * rejecting the same proposal are opposite actions and must not share a title,
+ * because the title is the part someone skims before pressing Confirm.
+ */
+function titleOf(card: ChatCard): string {
+  if (card.tool === "decide_review") {
+    return card.payload.decision === "reject" ? "Reject this proposal?" : "Approve this proposal?";
+  }
+  return TITLES[card.tool] ?? "Confirm?";
+}
+
+/**
+ * The line beside the buttons for an operator card. Says what happens on
+ * Confirm rather than what doesn't — "nothing is saved until you confirm" is
+ * the wrong reassurance when the thing on the other end is a write to the wiki
+ * or the mode every future write obeys.
+ */
+function operatorNote(card: ChatCard): string {
+  if (card.tool === "set_mode") return "This changes how Mort operates from now on";
+  return card.payload.decision === "reject"
+    ? "Nothing is written — the proposal is dropped"
+    : "This carries the proposal out straight away";
+}
+
 const DECIDED: Record<string, string> = {
   confirmed: "Confirmed",
   cancelled: "Dropped — nothing was written",
@@ -64,9 +93,50 @@ const DECIDED: Record<string, string> = {
   queued_for_review: "Sent to the admin review queue",
 };
 
-function BrainIcon() {
+/** What the card is about, in one glyph, matched to the tier it belongs to. */
+function CardIcon({ tool }: { tool: string }) {
+  const common = {
+    width: 14,
+    height: 14,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "shrink-0",
+  };
+  // Outline's own document glyph, so a page change reads as a page change —
+  // the same mark the Sources list uses (DESIGN.md §4).
+  if (KB_TOOLS.has(tool)) {
+    return (
+      <svg {...common}>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6M9 13h6M9 17h4" />
+      </svg>
+    );
+  }
+  // A plug: this one leaves the building.
+  if (WORLD_TOOLS.has(tool)) {
+    return (
+      <svg {...common}>
+        <path d="M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v5" />
+      </svg>
+    );
+  }
+  // Sliders — the console's own vocabulary, for the console's own actions.
+  if (ADMIN_TOOLS.has(tool)) {
+    return (
+      <svg {...common}>
+        <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2" />
+        <circle cx="16" cy="6" r="2" />
+        <circle cx="10" cy="12" r="2" />
+        <circle cx="16" cy="18" r="2" />
+      </svg>
+    );
+  }
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+    <svg {...common}>
       <path d="M12 5a3 3 0 0 0-6 0 3 3 0 0 0-1 5.8A3 3 0 0 0 8 16a3 3 0 0 0 4 2.8V5zM12 5a3 3 0 0 1 6 0 3 3 0 0 1 1 5.8A3 3 0 0 1 16 16a3 3 0 0 1-4 2.8V5z" />
     </svg>
   );
@@ -90,6 +160,13 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
   const fields = EDITABLE[card.tool] ?? [];
   const isKbChange = KB_TOOLS.has(card.tool);
   const reachesWorld = WORLD_TOOLS.has(card.tool);
+  const isOperator = ADMIN_TOOLS.has(card.tool);
+  // A page change rendered in the compact panel with no diff to read (P8).
+  // The widget's belt has no wiki tools, so this is only reachable by opening
+  // an older conversation in the panel — but a Confirm button over a change
+  // nobody can see is exactly what the surface rule exists to prevent, so it
+  // is refused here too rather than trusted not to happen.
+  const unreviewableHere = compact && isKbChange;
 
   async function decide(decision: "confirm" | "cancel" | "review") {
     setBusy(true);
@@ -140,7 +217,7 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
       <div className={`${frame} border-divider text-text-3`}>
         <div className="flex items-center gap-2">
           <span className={status === "confirmed" ? "text-success" : "text-text-3"}>
-            <BrainIcon />
+            <CardIcon tool={card.tool} />
           </span>
           <span className="truncate">{card.preview}</span>
           <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide">
@@ -151,13 +228,29 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
     );
   }
 
+  if (unreviewableHere) {
+    return (
+      <div className={`${frame} border-divider`}>
+        <div className="flex items-center gap-2 text-text-2">
+          <span className="text-text-3">
+            <CardIcon tool={card.tool} />
+          </span>
+          <span className="truncate">{card.preview}</span>
+        </div>
+        <p className="mt-1 text-[12px] text-text-3">
+          Wiki changes are confirmed in the full app, where the before/after fits on screen.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className={`${frame} border-accent/40`}>
       <div className="flex items-center gap-2 text-text">
         <span className="text-accent">
-          <BrainIcon />
+          <CardIcon tool={card.tool} />
         </span>
-        <span className="font-medium">{TITLES[card.tool] ?? "Confirm?"}</span>
+        <span className="font-medium">{titleOf(card)}</span>
       </div>
 
       {editing ? (
@@ -244,7 +337,9 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
             ? "This runs on connected equipment when you confirm"
             : isKbChange
               ? "The wiki is unchanged until you confirm"
-              : "Nothing is saved until you confirm"}
+              : isOperator
+                ? operatorNote(card)
+                : "Nothing is saved until you confirm"}
         </span>
       </div>
       {error && <p className="mt-1.5 text-[12px] text-danger">{error}</p>}
