@@ -5,15 +5,7 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type PendingCardRef, type Source } from "@/lib/db";
 import { collectProvenance } from "@/lib/provenance";
-import {
-  buildAgentTools,
-  buildSystemPrompt,
-  chatCanWriteKb,
-  getChatStack,
-  MAX_STEPS,
-  systemPromptOptions,
-  type KbSearchResult,
-} from "@mort/core/agent";
+import { getChatStack, prepareTurn, type KbSearchResult } from "@mort/core/agent";
 import { actingUserFromSession } from "@/lib/acting-user";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
 import { syncDocumentById } from "@/lib/rag/sync";
@@ -192,34 +184,42 @@ export async function POST(req: Request) {
     .values({ conversationId, role: "user", content: userText })
     .returning({ id: messages.id });
 
-  // The tool belt is built per turn and closed over THIS session's user, so
-  // nothing said in the conversation can change who a write is attributed to.
-  // `seen` is this turn's set of doc ids Mort actually found — the guard that
-  // stops a write landing on a page he only guessed at. `onWritten` is the
-  // assistant's own re-index: core owns Outline and Qdrant, the assistant owns
-  // kb_documents, so the hook crosses that line explicitly.
-  const canWriteKb = await chatCanWriteKb();
-  const turnTools = await buildAgentTools({
-    conversationId,
-    // A fact taught this turn is attributed to THIS message, which is what a
-    // provenance chip links back to (P2).
-    messageId: userMessage?.id ?? null,
-    user: actingUserFromSession(session),
-    seen: new Set<string>(),
-    onWritten: (docId) => syncDocumentById(docId),
-  });
+  // Everything the harness decides before a model is called: the belt (filtered
+  // by the chat channel's tier policy and wrapped so every call is journaled),
+  // the prompt, this channel's step cap, and the shared spend rail. The tools
+  // are closed over THIS session's user, so nothing said in the conversation can
+  // change who a write is attributed to; `seen` is this turn's set of doc ids
+  // Mort actually found, the guard that stops a write landing on a page he only
+  // guessed at. `onWritten` is the assistant's own re-index: core owns Outline
+  // and Qdrant, the assistant owns kb_documents, so the hook crosses that line
+  // explicitly. Streaming is why this route calls prepareTurn rather than
+  // runTurn — same plan, different way of getting the bytes out.
+  const plan = await prepareTurn(
+    { kind: "chat", messages: modelMessages },
+    {
+      channel: "chat",
+      actor: actingUserFromSession(session),
+      conversationId,
+      // A fact taught this turn is attributed to THIS message, which is what a
+      // provenance chip links back to (P2).
+      messageId: userMessage?.id ?? null,
+      onWritten: (docId) => syncDocumentById(docId),
+    },
+  );
 
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(await buildSystemPrompt({ canWriteKb })),
+      ...plan.systemOptions,
       messages: modelMessages,
-      // The tools are bound to this session user and this conversation (see
-      // buildAgentTools): the model chooses what to propose, never who it is
-      // proposed as.
-      tools: { ...turnTools, ...stack.providerTools },
-      stopWhen: stepCountIs(MAX_STEPS),
-      onFinish: async ({ text, steps }) => {
+      tools: { ...plan.tools, ...stack.providerTools },
+      stopWhen: stepCountIs(plan.maxSteps),
+      onFinish: async ({ text, steps, totalUsage }) => {
+        // Meter the turn against the shared daily cap. Chat is measured but
+        // never blocked by it (see mort-core/memory/spend.ts): cutting a crew
+        // member off mid-bump-in because the nightly dream was expensive is a
+        // worse failure than the bill.
+        await plan.spend.record(totalUsage?.totalTokens ?? 0);
         const sources = collectSources(steps, text);
         const pendingCards = collectPendingCards(steps);
         const provenance = collectProvenance(steps, text);

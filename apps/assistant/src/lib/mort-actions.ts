@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { getPendingAction, isKbWriteTool, type PendingAction } from "@mort/core/memory/pending";
-import { isToolAllowed, resolveKbWriteRoute } from "@mort/core/tools/policy";
+import { getPendingAction, isKbWriteTool, pendingToolTier, type PendingAction } from "@mort/core/memory/pending";
+import { isTierAllowed, resolveKbWriteRoute } from "@mort/core/tools/policy";
 import { actingUserFromSession } from "@/lib/acting-user";
 import { requireSession, type Session } from "@/lib/auth";
 import { conversations, db } from "@/lib/db";
@@ -56,7 +56,11 @@ export async function guardDecision(
   if (action.status !== "pending") {
     return fail(409, `That confirmation was already ${action.status}.`);
   }
-  if (!isToolAllowed(action.tool, "chat")) {
+  // The card's own tier, re-derived from the stored tool name — a card outlives
+  // the turn that raised it, so there is no belt left to ask. Checked against
+  // the confirming user's role, not the raising user's: they are the same person
+  // (the ownership check above) but roles change.
+  if (!isTierAllowed(pendingToolTier(action.tool), "chat", actingUserFromSession(session).role)) {
     return fail(403, "That action isn't allowed from chat.");
   }
   // A KB card gets its routing re-checked too, not just its tier: shadow mode,

@@ -4,7 +4,7 @@ const state = vi.hoisted(() => ({ chatWrites: null as string | null, mode: "live
 
 // resolveKbWriteRoute reads runtime settings; the tiers half of the module is
 // pure. Faking the two settings readers keeps both testable without a database.
-vi.mock("../memory", () => ({
+vi.mock("../memory/settings", () => ({
   getSetting: async (key: string) => (key === "chat_writes" ? state.chatWrites : null),
 }));
 vi.mock("../memory/config", () => ({
@@ -12,7 +12,7 @@ vi.mock("../memory/config", () => ({
   getEffectiveThreshold: async () => state.threshold,
 }));
 
-const { allowedTiers, isToolAllowed, resolveKbWriteRoute, toolTier, TOOL_TIERS } = await import("./policy");
+const { allowedTiers, isTierAllowed, resolveKbWriteRoute, tierNeedsConfirmation } = await import("./policy");
 
 const admin = { role: "admin" as const };
 const member = { role: "member" as const };
@@ -23,53 +23,53 @@ beforeEach(() => {
   state.threshold = 0.6;
 });
 
-describe("tool policy tiers", () => {
-  it("lets chat read and teach", () => {
-    expect(isToolAllowed("kb_search", "chat")).toBe(true);
-    expect(isToolAllowed("save_fact", "chat")).toBe(true);
-    expect(isToolAllowed("retire_fact", "chat")).toBe(true);
-    expect(isToolAllowed("log_event", "chat")).toBe(true);
-  });
-
-  it("lets chat change the wiki (P3), gated per-call by resolveKbWriteRoute", () => {
-    for (const tool of ["propose_doc_edit", "create_doc", "attach_source", "brain_dump", "apply_doc_edit"]) {
-      expect(toolTier(tool)).toBe("write:kb");
-      expect(isToolAllowed(tool, "chat")).toBe(true);
+describe("channel/role tier policy", () => {
+  it("lets chat read, teach and change the wiki, whoever is talking", () => {
+    for (const role of ["admin", "member"] as const) {
+      expect(isTierAllowed("read", "chat", role)).toBe(true);
+      expect(isTierAllowed("write:memory", "chat", role)).toBe(true);
+      expect(isTierAllowed("write:kb", "chat", role)).toBe(true);
     }
   });
 
-  it("keeps ingest away from Mort's memory", () => {
+  it("keeps ingest away from Mort's memory and from the world", () => {
     // The injection posture (Part IV): a OneDrive document is untrusted input,
-    // and the ingest channel simply has no write:memory tier to reach for.
-    expect(allowedTiers("ingest")).not.toContain("write:memory");
-    for (const tool of ["save_fact", "retire_fact", "log_event"]) {
-      expect(isToolAllowed(tool, "ingest")).toBe(false);
+    // and the ingest channel simply has no write:memory tier to reach for. Not
+    // a rule the document could argue with — a tier that isn't there.
+    expect(allowedTiers("ingest")).toEqual(["read"]);
+    for (const tier of ["write:memory", "write:kb", "write:world", "admin"] as const) {
+      expect(isTierAllowed(tier, "ingest", "admin")).toBe(false);
     }
-    expect(isToolAllowed("kb_search", "ingest")).toBe(true);
+    expect(isTierAllowed("read", "ingest")).toBe(true);
   });
 
-  it("keeps the chat write:kb tools off the ingest channel too", () => {
-    // Ingest writes the KB through the authoring pipeline, which carries its
-    // own gates. A document that talks its way into calling create_doc would
-    // bypass them, so the tier simply isn't on that channel.
-    expect(allowedTiers("ingest")).not.toContain("write:kb");
-    for (const tool of ["propose_doc_edit", "create_doc", "brain_dump"]) {
-      expect(isToolAllowed(tool, "ingest")).toBe(false);
+  it("keeps the dream read-only", () => {
+    expect(allowedTiers("dream")).toEqual(["read"]);
+    for (const tier of ["write:memory", "write:kb", "write:world", "admin"] as const) {
+      expect(isTierAllowed(tier, "dream", "admin")).toBe(false);
     }
   });
 
-  it("denies tools nobody declared a tier for", () => {
-    expect(toolTier("rm_rf")).toBeNull();
-    expect(isToolAllowed("rm_rf", "chat")).toBe(false);
-    // confirm_pending is deliberately untiered: it inherits the tier of the
-    // card it points at, re-checked at confirm time.
-    expect(TOOL_TIERS.confirm_pending).toBeUndefined();
+  it("reserves world and operator tiers for admins, even in chat", () => {
+    expect(isTierAllowed("write:world", "chat", "admin")).toBe(true);
+    expect(isTierAllowed("write:world", "chat", "member")).toBe(false);
+    expect(isTierAllowed("admin", "chat", "admin")).toBe(true);
+    expect(isTierAllowed("admin", "chat", "member")).toBe(false);
   });
 
-  it("keeps every write tool out of the dream channel", () => {
-    for (const [tool, tier] of Object.entries(TOOL_TIERS)) {
-      if (tier === "read") continue;
-      expect(isToolAllowed(tool, "dream")).toBe(false);
+  it("treats an unrecognised role as a member — less access, never more", () => {
+    // Roles arrive from the auth plugin as strings; a typo or a role added
+    // later must not accidentally grant the operator tier.
+    expect(isTierAllowed("admin", "chat", "superuser" as never)).toBe(false);
+    expect(isTierAllowed("read", "chat", "superuser" as never)).toBe(true);
+  });
+
+  it("makes only write:world confirm-first as a tier", () => {
+    // The others are confirm-first per TOOL (every write tool raises a card),
+    // but write:world is the tier that may never fire unattended at all.
+    expect(tierNeedsConfirmation("write:world")).toBe(true);
+    for (const tier of ["read", "write:memory", "write:kb", "admin"] as const) {
+      expect(tierNeedsConfirmation(tier)).toBe(false);
     }
   });
 });

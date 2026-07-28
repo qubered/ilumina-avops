@@ -41,127 +41,149 @@ const REGION_BODY_HELP =
 const REVIEW_NOTE =
   "Tell the user in one line that it's gone to the admin review queue, and why. Do NOT claim the wiki changed.";
 
+/**
+ * The four write:kb tools, each built for one turn's context.
+ *
+ * Declared individually (P4) so the registry can register each with its tier
+ * and its own enablement rule, rather than the belt receiving an opaque bundle
+ * it can't reason about. `buildKbTools` below still assembles all four for
+ * callers that want the whole tier at once.
+ */
+export function proposeDocEditTool(ctx: ChatToolContext) {
+  return tool({
+    description:
+      "Correct or extend an existing KB page. Use this when the user says a page is wrong or out of date " +
+      '("that patching page is wrong, it\'s actually X"). Shows them a before/after diff of Mort\'s section; ' +
+      "nothing is written until they confirm. Read the page with kb_get_doc first.",
+    inputSchema: z.object({
+      targetDocId: z
+        .string()
+        .describe("The Outline document id — MUST come from a kb_search or kb_get_doc result, never invented."),
+      regionBody: z.string().describe(REGION_BODY_HELP),
+      rationale: z.string().describe("One line: what is changing, and why the user's correction is right."),
+      confidence: z.number().min(0).max(1).describe("How sure you are this edit is correct and well-targeted."),
+    }),
+    execute: (input) => proposeDocEdit(ctx, input),
+  });
+}
+
+export function createDocTool(ctx: ChatToolContext) {
+  return tool({
+    description:
+      "Create a NEW KB page. Only once kb_search has shown there is no existing page to extend — updating an " +
+      "existing page always beats a near-duplicate. Nothing is written until the user confirms.",
+    inputSchema: z.object({
+      title: z.string().min(1).max(200).describe("The page title, in the KB's style — specific, not a sentence."),
+      collection: z.string().nullable().describe("Outline collection it belongs in, or null for the default."),
+      body: z
+        .string()
+        .min(1)
+        .describe(
+          "The page body in markdown, following KB conventions: a short intro, then ## headings, numbered steps " +
+            "where the source gives steps, tables for specs. Do NOT write the metadata header — it is added for you.",
+        ),
+      zone: z.array(z.string()).describe("Venue zones this concerns (e.g. Main Stage). Empty if none."),
+      system: z.array(z.string()).describe("Systems this concerns (Video, Audio, Lighting, Network…)."),
+      entities: z.array(z.string()).describe("Specific gear/rooms named in the content."),
+      docType: z.string().nullable().describe("How-to, Reference, Policy, Troubleshooting… or null."),
+      rationale: z.string().describe("One line: why this deserves its own page rather than an edit."),
+      confidence: z.number().min(0).max(1),
+    }),
+    execute: async (input): Promise<KbReply> => {
+      try {
+        const regionBody = buildRegionBody(input.body, input, ctx.conversationId);
+        return await createDoc(ctx, {
+          title: input.title,
+          collection: input.collection,
+          regionBody,
+          rationale: input.rationale,
+          confidence: input.confidence,
+        });
+      } catch (err) {
+        return { error: message(err) };
+      }
+    },
+  });
+}
+
+export function attachSourceTool(ctx: ChatToolContext) {
+  return tool({
+    description:
+      "Attach a file Mort already holds in his library (see mort_memory) to a KB page, listed under the page's " +
+      "Files section. Nothing is written until the user confirms.",
+    inputSchema: z.object({
+      targetDocId: z.string().describe("The Outline document id — from a kb_search or kb_get_doc result."),
+      sourceId: z.string().describe("The library source id of the file, exactly as mort_memory gave it."),
+      rationale: z.string().describe("One line: why that file belongs on that page."),
+    }),
+    execute: async ({ targetDocId, sourceId, rationale }): Promise<KbReply> => {
+      try {
+        const inventedTarget = !ctx.seen.has(targetDocId);
+        const doc = await getDocumentOrNull(targetDocId);
+        if (!doc) return { error: `No Outline document with id '${targetDocId}'.` };
+
+        const route = await resolveKbWriteRoute(ctx.user, { inventedTarget });
+        if (route.route === "blocked") return { status: "blocked", reason: route.reason };
+        if (route.route === "review") {
+          return queueForReview(ctx, {
+            action: "ATTACH",
+            targetDocId: inventedTarget ? null : targetDocId,
+            sourceId,
+            subject: sourceId,
+            rationale,
+            reason: route.reason,
+          });
+        }
+
+        return await raiseCard(
+          ctx,
+          "attach_source",
+          { targetDocId, sourceId, title: doc.title, rationale },
+          `Attach ${sourceId} to “${doc.title}” — ${rationale}`,
+          { docUrl: documentUrl(doc), warnings: [] },
+        );
+      } catch (err) {
+        return { error: message(err) };
+      }
+    },
+  });
+}
+
+export function brainDumpTool(ctx: ChatToolContext) {
+  return tool({
+    description:
+      "Turn a wall of unstructured information the user has just pasted or dictated (\"here's everything about " +
+      'the new comms setup") into properly formatted KB pages, facts and event-log entries. Use this instead of ' +
+      "answering when a message is long and informational rather than a question. Mort finds the existing pages " +
+      "first and prefers extending them to making duplicates. Writes nothing — it returns one card per resulting " +
+      "page, fact and event, each confirmed separately.",
+    inputSchema: z.object({
+      text: z
+        .string()
+        .min(1)
+        .describe("The user's dump, verbatim. Do not summarise or reformat it — the splitter needs the original."),
+    }),
+    execute: async ({ text }): Promise<Record<string, unknown>> => {
+      try {
+        return await runBrainDump(ctx, text);
+      } catch (err) {
+        console.error("[brain_dump] failed:", err);
+        return {
+          error:
+            "Couldn't break that down just now — say so and offer to take it one topic at a time instead. Nothing was written.",
+        };
+      }
+    },
+  });
+}
+
+/** The whole write:kb tier for one turn. */
 export function buildKbTools(ctx: ChatToolContext) {
   return {
-    propose_doc_edit: tool({
-      description:
-        "Correct or extend an existing KB page. Use this when the user says a page is wrong or out of date " +
-        '("that patching page is wrong, it\'s actually X"). Shows them a before/after diff of Mort\'s section; ' +
-        "nothing is written until they confirm. Read the page with kb_get_doc first.",
-      inputSchema: z.object({
-        targetDocId: z
-          .string()
-          .describe("The Outline document id — MUST come from a kb_search or kb_get_doc result, never invented."),
-        regionBody: z.string().describe(REGION_BODY_HELP),
-        rationale: z.string().describe("One line: what is changing, and why the user's correction is right."),
-        confidence: z.number().min(0).max(1).describe("How sure you are this edit is correct and well-targeted."),
-      }),
-      execute: (input) => proposeDocEdit(ctx, input),
-    }),
-
-    create_doc: tool({
-      description:
-        "Create a NEW KB page. Only once kb_search has shown there is no existing page to extend — updating an " +
-        "existing page always beats a near-duplicate. Nothing is written until the user confirms.",
-      inputSchema: z.object({
-        title: z.string().min(1).max(200).describe("The page title, in the KB's style — specific, not a sentence."),
-        collection: z.string().nullable().describe("Outline collection it belongs in, or null for the default."),
-        body: z
-          .string()
-          .min(1)
-          .describe(
-            "The page body in markdown, following KB conventions: a short intro, then ## headings, numbered steps " +
-              "where the source gives steps, tables for specs. Do NOT write the metadata header — it is added for you.",
-          ),
-        zone: z.array(z.string()).describe("Venue zones this concerns (e.g. Main Stage). Empty if none."),
-        system: z.array(z.string()).describe("Systems this concerns (Video, Audio, Lighting, Network…)."),
-        entities: z.array(z.string()).describe("Specific gear/rooms named in the content."),
-        docType: z.string().nullable().describe("How-to, Reference, Policy, Troubleshooting… or null."),
-        rationale: z.string().describe("One line: why this deserves its own page rather than an edit."),
-        confidence: z.number().min(0).max(1),
-      }),
-      execute: async (input): Promise<KbReply> => {
-        try {
-          const regionBody = buildRegionBody(input.body, input, ctx.conversationId);
-          return await createDoc(ctx, {
-            title: input.title,
-            collection: input.collection,
-            regionBody,
-            rationale: input.rationale,
-            confidence: input.confidence,
-          });
-        } catch (err) {
-          return { error: message(err) };
-        }
-      },
-    }),
-
-    attach_source: tool({
-      description:
-        "Attach a file Mort already holds in his library (see mort_memory) to a KB page, listed under the page's " +
-        "Files section. Nothing is written until the user confirms.",
-      inputSchema: z.object({
-        targetDocId: z.string().describe("The Outline document id — from a kb_search or kb_get_doc result."),
-        sourceId: z.string().describe("The library source id of the file, exactly as mort_memory gave it."),
-        rationale: z.string().describe("One line: why that file belongs on that page."),
-      }),
-      execute: async ({ targetDocId, sourceId, rationale }): Promise<KbReply> => {
-        try {
-          const inventedTarget = !ctx.seen.has(targetDocId);
-          const doc = await getDocumentOrNull(targetDocId);
-          if (!doc) return { error: `No Outline document with id '${targetDocId}'.` };
-
-          const route = await resolveKbWriteRoute(ctx.user, { inventedTarget });
-          if (route.route === "blocked") return { status: "blocked", reason: route.reason };
-          if (route.route === "review") {
-            return queueForReview(ctx, {
-              action: "ATTACH",
-              targetDocId: inventedTarget ? null : targetDocId,
-              sourceId,
-              subject: sourceId,
-              rationale,
-              reason: route.reason,
-            });
-          }
-
-          return await raiseCard(
-            ctx,
-            "attach_source",
-            { targetDocId, sourceId, title: doc.title, rationale },
-            `Attach ${sourceId} to “${doc.title}” — ${rationale}`,
-            { docUrl: documentUrl(doc), warnings: [] },
-          );
-        } catch (err) {
-          return { error: message(err) };
-        }
-      },
-    }),
-
-    brain_dump: tool({
-      description:
-        "Turn a wall of unstructured information the user has just pasted or dictated (\"here's everything about " +
-        'the new comms setup") into properly formatted KB pages, facts and event-log entries. Use this instead of ' +
-        "answering when a message is long and informational rather than a question. Mort finds the existing pages " +
-        "first and prefers extending them to making duplicates. Writes nothing — it returns one card per resulting " +
-        "page, fact and event, each confirmed separately.",
-      inputSchema: z.object({
-        text: z
-          .string()
-          .min(1)
-          .describe("The user's dump, verbatim. Do not summarise or reformat it — the splitter needs the original."),
-      }),
-      execute: async ({ text }): Promise<Record<string, unknown>> => {
-        try {
-          return await runBrainDump(ctx, text);
-        } catch (err) {
-          console.error("[brain_dump] failed:", err);
-          return {
-            error:
-              "Couldn't break that down just now — say so and offer to take it one topic at a time instead. Nothing was written.",
-          };
-        }
-      },
-    }),
+    propose_doc_edit: proposeDocEditTool(ctx),
+    create_doc: createDocTool(ctx),
+    attach_source: attachSourceTool(ctx),
+    brain_dump: brainDumpTool(ctx),
   };
 }
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { env } from "../env";
 import { pool } from "./db";
+import type { ToolTier } from "../tools/types";
 
 /**
  * The confirm-then-live queue (MORT_V2_PLAN I.4).
@@ -35,6 +36,19 @@ export const PENDING_TOOLS: PendingTool[] = [
 /** KB cards can be diverted to the admin review queue; memory cards cannot. */
 export function isKbWriteTool(tool: PendingTool): boolean {
   return tool === "apply_doc_edit" || tool === "create_doc" || tool === "attach_source";
+}
+
+/**
+ * The policy tier a parked card carries (P4).
+ *
+ * A card outlives the turn that raised it, so confirming one has to re-derive
+ * the tier from the stored tool name rather than from a belt that no longer
+ * exists. Declared here, next to the tool union, and cross-checked against the
+ * registry by its own test — a card whose tier disagreed with its tool would
+ * be a hole straight through the harness.
+ */
+export function pendingToolTier(tool: PendingTool): ToolTier {
+  return isKbWriteTool(tool) ? "write:kb" : "write:memory";
 }
 
 export function isPendingTool(v: unknown): v is PendingTool {

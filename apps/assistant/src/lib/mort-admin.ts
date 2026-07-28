@@ -2,7 +2,22 @@ import { env as coreEnv } from "@mort/core/env";
 import { getSelfUserId } from "@mort/core/kb/outline";
 import { buildWriteDeps } from "@mort/core/kb/write-deps";
 import { executeReview } from "@mort/core/kb/execute";
-import { getEffectiveMode, getEffectiveThreshold, setMode as coreSetMode } from "@mort/core/memory/config";
+import {
+  getEffectiveMode,
+  getEffectiveThreshold,
+  getMaxSteps,
+  setMaxSteps as coreSetMaxSteps,
+  setMode as coreSetMode,
+} from "@mort/core/memory/config";
+import {
+  getChannelBudget,
+  getDailyTokenCap,
+  setChannelBudget as coreSetChannelBudget,
+  spendToday,
+  spendTodayByChannel,
+} from "@mort/core/memory/spend";
+import { listToolCalls, toolCallsToday, type ToolCallRow, type ToolCallSummary } from "@mort/core/memory/tool-journal";
+import { CHANNELS, type Channel } from "@mort/core/tools/types";
 import {
   appendJournal,
   factHistory as coreFactHistory,
@@ -18,7 +33,7 @@ import {
   type MortFact as CoreMortFact,
 } from "@mort/core/memory";
 import { chatWritesEnabled } from "@mort/core/tools/policy";
-import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob, tokensToday } from "@mort/core/memory/jobs";
+import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob } from "@mort/core/memory/jobs";
 import { listRecentPendingActions, type PendingAction } from "@mort/core/memory/pending";
 
 /**
@@ -115,6 +130,17 @@ export async function setChatWrites(enabled: boolean): Promise<void> {
   console.log(`[mort] chat writes ${enabled ? "enabled" : "disabled"} via admin`);
 }
 
+/** One channel's slice of today's spend, against its soft budget (P4). */
+export type MortChannelSpend = {
+  channel: Channel;
+  tokens: number;
+  /** Soft: reported, never enforced. The daily cap is the hard rail. */
+  budget: number | null;
+  overBudget: boolean;
+  /** Steps a turn on this channel may take — mort_settings, per channel. */
+  maxSteps: number;
+};
+
 export type MortHealth = {
   mode: MortMode;
   queue: { pending: number; running: number; dead: number };
@@ -122,13 +148,37 @@ export type MortHealth = {
   dailyTokenCap: number | null;
   capReached: boolean;
   deadJobs: Array<{ id: number; sourceId: string; attempts: number; lastError: string | null }>;
+  /** Where today's tokens went — chat included, which v1's cap never saw. */
+  channels: MortChannelSpend[];
+  /** Volume through the harness today, and how much of it was refused. */
+  tools: ToolCallSummary;
 };
 
-/** Ops health: queue depth, dead-letters, today's model spend. Null on failure. */
+/**
+ * Ops health: queue depth, dead-letters, today's model spend by channel, and
+ * what the tool harness saw.
+ *
+ * The per-channel breakdown is the P4 addition that matters most in practice:
+ * the cap is now shared, so "we hit the cap" immediately raises "which channel
+ * spent it", and that used to be unanswerable. Null on failure.
+ */
 export async function getMortHealth(): Promise<MortHealth | null> {
   try {
-    const [queue, spent, dead] = await Promise.all([queueStats(), tokensToday(), listDeadJobs(10)]);
-    const cap = coreEnv.MORT_DAILY_TOKEN_CAP;
+    const [queue, spent, dead, cap, byChannel, tools] = await Promise.all([
+      queueStats(),
+      spendToday(),
+      listDeadJobs(10),
+      getDailyTokenCap(),
+      spendTodayByChannel(),
+      toolCallsToday(),
+    ]);
+    const channels = await Promise.all(
+      CHANNELS.map(async (channel): Promise<MortChannelSpend> => {
+        const tokens = byChannel[channel] ?? 0;
+        const budget = await getChannelBudget(channel);
+        return { channel, tokens, budget, overBudget: budget != null && tokens >= budget, maxSteps: await getMaxSteps(channel) };
+      }),
+    );
     return {
       mode: await getEffectiveMode(),
       queue,
@@ -136,6 +186,8 @@ export async function getMortHealth(): Promise<MortHealth | null> {
       dailyTokenCap: cap || null,
       capReached: cap > 0 && spent >= cap,
       deadJobs: dead,
+      channels,
+      tools,
     };
   } catch (err) {
     console.error("[mort-admin] getMortHealth failed:", err);
@@ -193,21 +245,30 @@ export type MortActiveJob = {
   lastError: string | null;
 };
 
+export type MortToolCall = ToolCallRow;
+
 export type MortActivity = {
   journal: MortActivityRow[];
   library: MortLibraryRow[];
   queue: MortActiveJob[];
+  /**
+   * Every tool call the harness saw, newest first (P4, decision V2-5). A
+   * different artifact from `journal`: that one says what Mort decided and why,
+   * this one says what he reached for — including anything a channel refused.
+   */
+  toolCalls: MortToolCall[];
 };
 
 /** What Mort has been doing, what's in flight, and everything he holds. Null on failure. */
 export async function getMortActivity(query?: string): Promise<MortActivity | null> {
   try {
-    const [journal, library, queue] = await Promise.all([
+    const [journal, library, queue, toolCalls] = await Promise.all([
       recentActivity(50),
       listLibrary(query),
       listActiveJobs(),
+      listToolCalls({ limit: 60 }),
     ]);
-    return { journal, library, queue };
+    return { journal, library, queue, toolCalls };
   } catch (err) {
     console.error("[mort-admin] getMortActivity failed:", err);
     return null;
@@ -304,4 +365,26 @@ export async function setMortMode(mode: MortMode): Promise<{ ok: boolean; status
   await coreSetMode(mode);
   console.log(`[mort] mode set to ${mode} via admin`);
   return { ok: true, status: 200, json: { mode } };
+}
+
+/**
+ * The per-channel rails (P4): how many steps a turn may take, and how many
+ * tokens a channel is expected to use in a day.
+ *
+ * Both live in `mort_settings` rather than env so they can be moved during an
+ * incident. The budget is soft — it colours the health panel; the daily cap is
+ * the thing that actually stops work.
+ */
+export async function setChannelRails(
+  channel: Channel,
+  rails: { maxSteps?: number; budget?: number },
+): Promise<void> {
+  if (rails.maxSteps !== undefined) {
+    await coreSetMaxSteps(channel, rails.maxSteps);
+    console.log(`[mort] ${channel} max steps set to ${rails.maxSteps} via admin`);
+  }
+  if (rails.budget !== undefined) {
+    await coreSetChannelBudget(channel, rails.budget);
+    console.log(`[mort] ${channel} soft budget set to ${rails.budget} via admin`);
+  }
 }

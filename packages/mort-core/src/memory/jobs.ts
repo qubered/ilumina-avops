@@ -168,10 +168,11 @@ export async function listDeadJobs(limit = 20): Promise<DeadJob[]> {
   return rows.map((r) => ({ id: r.id, sourceId: r.source_id, attempts: r.attempts, lastError: r.last_error }));
 }
 
-/** Tokens Mort has spent on model calls today (drives the daily cap). */
-export async function tokensToday(): Promise<number> {
-  const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(tokens), 0)::int AS n FROM mort_journal WHERE ts >= CURRENT_DATE`,
-  );
-  return rows[0]?.n ?? 0;
-}
+/**
+ * Tokens Mort has spent on model calls today, across every channel.
+ *
+ * Re-pointed at the spend ledger in P4. It used to sum `mort_journal.tokens`,
+ * which only the ingest worker and the dream ever wrote — so the daily cap
+ * silently ignored everything a chat turn cost. See memory/spend.ts.
+ */
+export { spendToday as tokensToday } from "./spend";
