@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
-import { setChannelRails, setChatWrites, setMortMode } from "@/lib/mort-admin";
+import { setChannelRails, setChatWrites, setIngestEngine, setMortMode } from "@/lib/mort-admin";
 
 const bodySchema = z
   .object({
@@ -16,10 +16,14 @@ const bodySchema = z
     channel: z.enum(["chat", "ingest", "dream"]).optional(),
     maxSteps: z.number().int().min(1).max(40).optional(),
     budget: z.number().int().min(0).optional(),
+    /** The v2/P6 cutover: which engine decides about an arriving file. */
+    engine: z.enum(["pipeline", "agent"]).optional(),
   })
-  .refine((b) => b.mode !== undefined || b.chatWrites !== undefined || b.channel !== undefined, {
-    message: "Nothing to set",
-  })
+  .refine(
+    (b) =>
+      b.mode !== undefined || b.chatWrites !== undefined || b.channel !== undefined || b.engine !== undefined,
+    { message: "Nothing to set" },
+  )
   .refine((b) => b.channel === undefined || b.maxSteps !== undefined || b.budget !== undefined, {
     message: "Naming a channel without a rail to set does nothing",
   });
@@ -39,6 +43,7 @@ export async function POST(req: Request) {
       budget: parsed.data.budget,
     });
   }
+  if (parsed.data.engine !== undefined) await setIngestEngine(parsed.data.engine);
   if (parsed.data.mode !== undefined) {
     const result = await setMortMode(parsed.data.mode);
     if (!result.ok) return NextResponse.json(result.json, { status: result.status });

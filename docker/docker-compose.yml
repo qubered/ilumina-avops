@@ -146,6 +146,9 @@ services:
       # the ingest service's MORT_MODE below.
       MORT_MODE: ${MORT_MODE:-off}
       MORT_DAILY_TOKEN_CAP: ${MORT_DAILY_TOKEN_CAP:-0}
+      # Same again for the ingestion engine, so the admin console shows the same
+      # default the worker would use before anyone has flipped the setting.
+      MORT_INGEST_ENGINE: ${MORT_INGEST_ENGINE:-pipeline}
       # Confirm-then-live rails: how long a confirmation card the crew never
       # answered stays clickable, and how many one person can raise in a day.
       MORT_PENDING_TTL_HOURS: ${MORT_PENDING_TTL_HOURS:-24}
@@ -216,6 +219,12 @@ services:
       # Mort authoring mode: off (legacy) | shadow (propose only) | live.
       MORT_MODE: ${MORT_MODE:-off}
       MORT_CONFIDENCE_THRESHOLD: ${MORT_CONFIDENCE_THRESHOLD:-0.6}
+      # Which engine decides about an arriving file (v2/P6): pipeline (the v1
+      # fixed three passes) | agent (one bounded agent turn). This is only the
+      # default — mort_settings.ingest_engine wins, so the admin console can
+      # flip it, and roll it back, without a redeploy. Compare the two on your
+      # own corpus first: pnpm --filter ingest parity -- --dir <folder>
+      MORT_INGEST_ENGINE: ${MORT_INGEST_ENGINE:-pipeline}
       # Ceiling on a day's model spend. 0 = unlimited, which is the wrong default
       # for an autonomous live Mort: R7 made a turn two model calls and a page
       # write re-check its siblings, so a bulk ingest can cost several times what

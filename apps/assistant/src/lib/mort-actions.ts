@@ -77,7 +77,7 @@ export async function guardDecision(
     // mode, the chat-writes freeze and the caller's role are all runtime state
     // that may have changed since Mort raised the card.
     if (isKbWriteTool(action.tool)) {
-      const route = await resolveKbWriteRoute(actingUserFromSession(session));
+      const route = await resolveKbWriteRoute({ channel: "chat", role: actingUserFromSession(session).role });
       if (route.route !== "apply") return fail(403, route.reason);
     }
   }

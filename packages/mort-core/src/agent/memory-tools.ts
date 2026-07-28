@@ -134,7 +134,7 @@ export function confirmPendingTool(ctx: ChatToolContext) {
       // propose time: the mode may have flipped to shadow, or chat writes been
       // frozen, between Mort offering the card and the user saying yes.
       if (isKbWriteTool(action.tool)) {
-        const route = await resolveKbWriteRoute(ctx.user);
+        const route = await resolveKbWriteRoute({ channel: "chat", role: ctx.user.role });
         if (route.route !== "apply") return { error: route.reason };
       }
 

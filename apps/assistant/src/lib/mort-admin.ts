@@ -5,9 +5,12 @@ import { executeReview } from "@mort/core/kb/execute";
 import {
   getEffectiveMode,
   getEffectiveThreshold,
+  getIngestEngine,
   getMaxSteps,
+  setIngestEngine as coreSetIngestEngine,
   setMaxSteps as coreSetMaxSteps,
   setMode as coreSetMode,
+  type IngestEngine,
 } from "@mort/core/memory/config";
 import {
   getChannelBudget,
@@ -108,7 +111,13 @@ export async function decideReview(
 }
 
 export type MortMode = "off" | "shadow" | "live";
-export type MortConfig = { mode: MortMode; threshold: number; envDefault: string; chatWrites: boolean };
+export type MortConfig = {
+  mode: MortMode;
+  threshold: number;
+  envDefault: string;
+  chatWrites: boolean;
+  engine: IngestEngine;
+};
 
 export async function getMortConfig(): Promise<MortConfig> {
   return {
@@ -116,7 +125,24 @@ export async function getMortConfig(): Promise<MortConfig> {
     threshold: await getEffectiveThreshold(),
     envDefault: coreEnv.MORT_MODE,
     chatWrites: await chatWritesEnabled(),
+    engine: await getIngestEngine(),
   };
+}
+
+/**
+ * The v2/P6 cutover switch: which engine decides what happens to an arriving
+ * file. Runtime rather than deploy-time so a rollback is one click — and
+ * because the evidence for flipping it (the parity run) is gathered against a
+ * deployment's own corpus, not in CI.
+ */
+export async function setIngestEngine(engine: IngestEngine): Promise<void> {
+  await coreSetIngestEngine(engine);
+  await appendJournal({
+    action: `engine:${engine}`,
+    rationale: `ingestion engine switched to ${engine} from the admin console`,
+    channel: "admin",
+  });
+  console.log(`[mort] ingestion engine → ${engine}`);
 }
 
 /**

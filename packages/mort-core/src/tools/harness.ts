@@ -4,8 +4,11 @@ import type { ActingUser } from "../agent/pending-actions";
 import { isTierAllowed, tierNeedsConfirmation } from "./policy";
 import type { ActorRole, Channel } from "./types";
 // Type-only: the registry imports this module, so importing it back for a
-// value would close the loop at module-eval time.
+// value would close the loop at module-eval time. Same for the two machine
+// channels' turn state.
 import type { ToolSpec } from "./registry";
+import type { IngestTurnState } from "../agent/ingest-tools";
+import type { DreamTurnState } from "../agent/dream-tools";
 
 /**
  * The harness (MORT_V2_PLAN I.2, decision V2-5).
@@ -36,6 +39,16 @@ export type ToolContext = {
   seen: Set<string>;
   /** Re-index hook for a page a confirmed card just wrote. */
   onWritten?: (docId: string) => Promise<void>;
+  /**
+   * The machine channels' per-turn state (P6). Set by `prepareTurn` from the
+   * entry, never by a tool: `ingest` is the file being decided about and the
+   * decision reached so far, `dream` is the corpus digest and what's been
+   * raised. A chat turn has neither, and the tools that read them are narrowed
+   * to their channel in the registry, so "the state is missing" is a bug rather
+   * than a routine case.
+   */
+  ingest?: IngestTurnState;
+  dream?: DreamTurnState;
 };
 
 /** How an actor is named in the audit log. */

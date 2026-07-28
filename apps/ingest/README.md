@@ -78,13 +78,57 @@ file return `skipped` (content is hashed), so the flow is safe to fire often.
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | for openai |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | for anthropic |
 | `INGEST_DEFAULT_COLLECTION` | fallback collection if the AI can't route |
+| `MORT_INGEST_ENGINE` | `pipeline` (default) · `agent` — the env-level default only; `mort_settings.ingest_engine` wins |
 
 **Model quality matters here.** Normalising a messy document into a clean,
 correctly-categorised article is harder than answering a chat question — small
 free models produce garbled titles and metadata. Use a capable model
 (the compose default is `meta-llama/llama-3.3-70b-instruct:free`; a paid model
 like `claude-sonnet-5` or `gpt-4o` is markedly better for this task). This is
-independent of the assistant's chat model.
+independent of the assistant's chat model. The `agent` engine additionally
+needs reliable **tool calling** — a model that can't hold a tool schema will
+fail the turn outright rather than degrade.
+
+## Which engine decides (v2/P6)
+
+Two engines can decide what happens to an arriving file. They take the same
+input, produce the same outcome shape, write the same journal row, and obey the
+same gates — shadow mode, the confidence bar, never touching a page Mort only
+guessed at.
+
+- **`pipeline`** — the v1 three passes in a fixed order: describe the file,
+  pull up everything related, decide.
+- **`agent`** — the same judgement inside one bounded agent turn
+  (`runIngestTurn`), on the same belt and harness chat uses. Mort states what
+  the file is (`note_understanding`), is handed the same multi-axis retrieval
+  that produces, and can then read a second candidate page before choosing —
+  which the pipeline could never do, however obviously the first page called
+  for it. He ends the turn with exactly one of `create_page`, `update_page`,
+  `attach_to_page`, `hold_file`, `skip_file` or `send_to_review`. Every tool
+  call lands in `mort_tool_calls`; the turn is capped at
+  `mort_settings.max_steps_ingest` steps (default 12) and holds the file rather
+  than guessing if it runs out.
+
+`classify` is unchanged and runs before either: it's deterministic
+pre-processing, not a judgement.
+
+**Before switching, diff them on your own corpus:**
+
+```
+pnpm --filter ingest parity -- --dir ../../sample_kb --json parity.json
+pnpm --filter ingest parity -- --library --limit 25
+```
+
+Neither engine writes anything during a parity run — the write executors are
+replaced with recorders. Reads are real, because retrieval is most of what the
+two disagree about. Disagreement isn't failure: read each one and decide
+whether the agent's call is at least as good. Then flip
+`mort_settings.ingest_engine` to `agent` from the admin console (Mort → Mode).
+Rolling back is the same switch.
+
+Note that `--library` can only replay files whose bytes Mort still holds
+(reference and media); a Word document's bytes aren't kept, so use `--dir` for
+those. The harness says how many it skipped and why.
 
 ## Notes / limits (v1)
 

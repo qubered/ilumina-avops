@@ -8,6 +8,7 @@
     "./identity": "./src/identity/index.ts",
     "./model/chat": "./src/model/chat.ts",
     "./model/ingest": "./src/model/ingest.ts",
+    "./model/ratelimit": "./src/model/ratelimit.ts",
     "./memory": "./src/memory/index.ts",
     "./memory/types": "./src/memory/types.ts",
     "./memory/provenance": "./src/memory/provenance.ts",
@@ -51,12 +52,14 @@
     "./agent/cards": "./src/agent/cards.ts",
     "./agent/dump": "./src/agent/dump.ts",
     "./agent/gather": "./src/agent/gather.ts",
+    "./agent/ingest-tools": "./src/agent/ingest-tools.ts",
     "./agent/kb-tools": "./src/agent/kb-tools.ts",
     "./agent/memory-tools": "./src/agent/memory-tools.ts",
     "./agent/prompt": "./src/agent/prompt.ts",
     "./agent/read-tools": "./src/agent/read-tools.ts",
     "./agent/run-turn": "./src/agent/run-turn.ts",
-    "./agent/pending-actions": "./src/agent/pending-actions.ts"
+    "./agent/pending-actions": "./src/agent/pending-actions.ts",
+    "./agent/proposal": "./src/agent/proposal.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

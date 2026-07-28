@@ -31,8 +31,16 @@ export {
   SYSTEM_PROMPT,
   WRITE_RULES,
 } from "./prompt";
-export { prepareTurn, runTurn } from "./run-turn";
-export type { TurnContext, TurnEntry, TurnPlan, TurnResult } from "./run-turn";
+export { prepareTurn, runTurn, runDreamTurn, runIngestTurn } from "./run-turn";
+export type {
+  DreamTurnResult,
+  IngestTurnResult,
+  TurnContext,
+  TurnEntry,
+  TurnPlan,
+  TurnResult,
+} from "./run-turn";
+export type { IngestDeps, IngestFile, IngestUnderstanding } from "./ingest-tools";
 // The belt itself, for callers assembling one outside a turn. Inside a turn,
 // prepareTurn is the door — it settles the belt, the prompt, the step cap and
 // the spend rail together, which is the point of there being a harness.

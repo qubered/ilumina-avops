@@ -122,7 +122,7 @@ export function attachSourceTool(ctx: ChatToolContext) {
         const doc = await getDocumentOrNull(targetDocId);
         if (!doc) return { error: `No Outline document with id '${targetDocId}'.` };
 
-        const route = await resolveKbWriteRoute(ctx.user, { inventedTarget });
+        const route = await resolveKbWriteRoute({ channel: "chat", role: ctx.user.role }, { inventedTarget });
         if (route.route === "blocked") return { status: "blocked", reason: route.reason };
         if (route.route === "review") {
           return queueForReview(ctx, {
@@ -222,7 +222,7 @@ async function proposeDocEdit(
       return { error: `“${preview.title}” already says exactly that — nothing to change.` };
     }
 
-    const route = await resolveKbWriteRoute(ctx.user, { confidence, inventedTarget });
+    const route = await resolveKbWriteRoute({ channel: "chat", role: ctx.user.role }, { confidence, inventedTarget });
     if (route.route === "blocked") return { status: "blocked", reason: route.reason };
 
     if (route.route === "review") {
@@ -261,7 +261,7 @@ async function createDoc(
     confidence: number;
   },
 ): Promise<KbReply> {
-  const route = await resolveKbWriteRoute(ctx.user, { confidence: input.confidence });
+  const route = await resolveKbWriteRoute({ channel: "chat", role: ctx.user.role }, { confidence: input.confidence });
   if (route.route === "blocked") return { status: "blocked", reason: route.reason };
   if (route.route === "review") {
     return queueForReview(ctx, {

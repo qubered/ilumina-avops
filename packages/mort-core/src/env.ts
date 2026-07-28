@@ -67,6 +67,11 @@ const schema = z.object({
   MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
 
+  // Which engine decides what happens to an arriving file (v2/P6). Defaults to
+  // the v1 pipeline: the agent loop replaces it only once a parity run on the
+  // deployment's own corpus says it should (see memory/config.ts).
+  MORT_INGEST_ENGINE: z.enum(["pipeline", "agent"]).default("pipeline"),
+
   // Confirm-then-live rails (v2 P1). A card nobody answers expires; a runaway
   // conversation can't flood the queue past the per-user daily cap.
   MORT_PENDING_TTL_HOURS: z.coerce.number().min(1).default(24),
