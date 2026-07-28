@@ -571,6 +571,12 @@ export async function docDigest(limit = 300): Promise<DocEntry[]> {
 
 // --- Current-state facts (R1 slice 3) --------------------------------------
 
+/**
+ * A fact's window is HALF-OPEN: in force from `effectiveFrom` (inclusive) until
+ * `effectiveTo` (exclusive). Retiring a fact today therefore stamps today — it
+ * stops being true now, not at midnight — and superseding one stamps the
+ * successor's start date, so exactly one row in a chain is ever current.
+ */
 export type MortFact = {
   id: number;
   factKey: string;
@@ -582,6 +588,8 @@ export type MortFact = {
   approvedBy: string;
   confidence: string | null;
   note: string | null;
+  /** The fact this one replaced, when it corrected an earlier answer. */
+  supersedes: number | null;
 };
 
 const mapFact = (r: Record<string, unknown>): MortFact => ({
@@ -595,23 +603,55 @@ const mapFact = (r: Record<string, unknown>): MortFact => ({
   approvedBy: r.approved_by as string,
   confidence: (r.confidence as string) ?? null,
   note: (r.note as string) ?? null,
+  supersedes: (r.supersedes as number) ?? null,
 });
+
+const FACT_COLS = `id::int AS id, fact_key, value, scope, effective_from, effective_to,
+                   source_tier, approved_by, confidence, note, supersedes::int AS supersedes`;
 
 /** Facts in force today, optionally filtered by free text. */
 export async function listCurrentFacts(q?: string, limit = 25): Promise<MortFact[]> {
   const like = q?.trim() ? `%${q.trim()}%` : null;
   const { rows } = await pool.query(
-    `SELECT id::int AS id, fact_key, value, scope, effective_from, effective_to,
-            source_tier, approved_by, confidence, note
+    `SELECT ${FACT_COLS}
        FROM mort_facts
       WHERE (effective_from IS NULL OR effective_from <= CURRENT_DATE)
-        AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+        AND (effective_to IS NULL OR effective_to > CURRENT_DATE)
         AND ($1::text IS NULL OR fact_key ILIKE $1 OR value ILIKE $1 OR scope ILIKE $1 OR note ILIKE $1)
       ORDER BY effective_from DESC NULLS LAST, id DESC
       LIMIT $2`,
     [like, Math.min(Math.max(limit, 1), 50)],
   );
   return rows.map(mapFact);
+}
+
+export async function getFact(id: number): Promise<MortFact | null> {
+  const { rows } = await pool.query(`SELECT ${FACT_COLS} FROM mort_facts WHERE id = $1`, [id]);
+  return rows.length ? mapFact(rows[0]) : null;
+}
+
+/**
+ * The fact currently answering this exact key AND scope — what a new statement
+ * about the same thing would replace.
+ *
+ * Both halves are matched exactly (case- and whitespace-insensitively), and a
+ * missing scope matches only a missing scope: superseding the wrong fact is
+ * worse than not superseding one, and "the LED wall is at 6m" said with no
+ * zone in mind must not silently retire the Main Stage's answer.
+ */
+export async function findCurrentFactByKey(factKey: string, scope?: string | null): Promise<MortFact | null> {
+  const { rows } = await pool.query(
+    `SELECT ${FACT_COLS}
+       FROM mort_facts
+      WHERE lower(btrim(fact_key)) = lower(btrim($1))
+        AND lower(btrim(coalesce(scope,''))) = lower(btrim(coalesce($2::text,'')))
+        AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+        AND (effective_to IS NULL OR effective_to > CURRENT_DATE)
+      ORDER BY effective_from DESC NULLS LAST, id DESC
+      LIMIT 1`,
+    [factKey, scope ?? null],
+  );
+  return rows.length ? mapFact(rows[0]) : null;
 }
 
 export async function insertFact(f: {
@@ -624,10 +664,12 @@ export async function insertFact(f: {
   approvedBy: string;
   confidence?: string | null;
   note?: string | null;
+  /** id of the fact this one replaces — the history chain (MORT_V2_PLAN I.7). */
+  supersedes?: number | null;
 }): Promise<number> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id::int AS id`,
+    `INSERT INTO mort_facts (fact_key, value, scope, effective_from, effective_to, source_tier, approved_by, confidence, note, supersedes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::int AS id`,
     [
       f.factKey,
       f.value,
@@ -638,16 +680,48 @@ export async function insertFact(f: {
       f.approvedBy,
       f.confidence ?? null,
       f.note ?? null,
+      f.supersedes ?? null,
     ],
   );
   return rows[0].id as number;
 }
 
-/** Close a fact off as of today (superseded / no longer true). */
-export async function retireFact(id: number): Promise<boolean> {
+/**
+ * Declare a fact, superseding whatever currently answers the same key+scope.
+ *
+ * This is the ONE way a fact is declared, whether it came from the admin panel
+ * or from someone telling Mort in chat: the previous row is closed off at the
+ * new one's start date and the new row points back at it, so a fact's history
+ * is a chain rather than an overwrite (MORT_V2_PLAN I.7, wiring the `supersedes`
+ * column v1 defined but never used).
+ */
+export async function saveFactSuperseding(f: {
+  factKey: string;
+  value: string;
+  scope?: string | null;
+  effectiveFrom?: string | null;
+  sourceTier?: string | null;
+  approvedBy: string;
+  confidence?: string | null;
+  note?: string | null;
+}): Promise<{ id: number; superseded: MortFact | null; effectiveFrom: string }> {
+  const effectiveFrom = f.effectiveFrom ?? new Date().toISOString().slice(0, 10);
+  const superseded = await findCurrentFactByKey(f.factKey, f.scope ?? null);
+  if (superseded) await retireFact(superseded.id, effectiveFrom);
+  const id = await insertFact({ ...f, effectiveFrom, supersedes: superseded?.id ?? null });
+  return { id, superseded, effectiveFrom };
+}
+
+/**
+ * Close a fact off. `asOf` (ISO date) is the exclusive end of its window —
+ * defaults to today, i.e. "it isn't true any more, starting now". Superseding
+ * passes the successor's start date so the two windows abut exactly.
+ */
+export async function retireFact(id: number, asOf?: string | null): Promise<boolean> {
   const { rowCount } = await pool.query(
-    `UPDATE mort_facts SET effective_to = CURRENT_DATE WHERE id = $1 AND (effective_to IS NULL OR effective_to > CURRENT_DATE)`,
-    [id],
+    `UPDATE mort_facts SET effective_to = COALESCE($2::date, CURRENT_DATE)
+      WHERE id = $1 AND (effective_to IS NULL OR effective_to > COALESCE($2::date, CURRENT_DATE))`,
+    [id, asOf ?? null],
   );
   return (rowCount ?? 0) > 0;
 }

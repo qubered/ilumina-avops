@@ -3,18 +3,18 @@ import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
-import { conversations, db, messages, type Source } from "@/lib/db";
+import { conversations, db, messages, type PendingCardRef, type Source } from "@/lib/db";
 import {
+  buildAgentTools,
   buildSystemPrompt,
-  buildTurnTools,
+  chatCanWriteKb,
   getChatStack,
   MAX_STEPS,
   systemPromptOptions,
   type KbSearchResult,
 } from "@mort/core/agent";
-import { chatWritesEnabled } from "@mort/core/tools/policy";
+import { actingUserFromSession } from "@/lib/acting-user";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
-import { actingUser } from "@/lib/mort-actor";
 import { syncDocumentById } from "@/lib/rag/sync";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
@@ -82,6 +82,56 @@ function collectSources(
   return mergeSources(citedKb.length > 0 ? citedKb : dedupedKb, dedupedWeb, fromText);
 }
 
+/**
+ * Confirmation cards raised this turn. They're persisted on the assistant
+ * message so reopening the conversation still shows what Mort offered to
+ * remember — a card that vanishes on reload is a fact quietly lost.
+ */
+function collectPendingCards(steps: Array<{ toolResults?: unknown[] }>): PendingCardRef[] {
+  const cards = new Map<string, PendingCardRef>();
+
+  // A tool output is either a card itself or, for brain_dump, an envelope with
+  // arrays of them (pages / facts / events). Walking one level into arrays
+  // covers both without the collector having to know which tool it came from.
+  const harvest = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) harvest(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const card = value as {
+      pendingId?: string;
+      tool?: string;
+      preview?: string;
+      payload?: Record<string, unknown>;
+      diff?: PendingCardRef["diff"];
+      docUrl?: string;
+      warnings?: string[];
+      pages?: unknown;
+      facts?: unknown;
+      events?: unknown;
+    };
+    if (typeof card.pendingId === "string" && typeof card.tool === "string") {
+      cards.set(card.pendingId, {
+        id: card.pendingId,
+        tool: card.tool,
+        preview: card.preview ?? "",
+        payload: card.payload ?? {},
+        ...(card.diff ? { diff: card.diff } : {}),
+        ...(card.docUrl ? { docUrl: card.docUrl } : {}),
+        ...(card.warnings?.length ? { warnings: card.warnings } : {}),
+      });
+      return;
+    }
+    for (const nested of [card.pages, card.facts, card.events]) harvest(nested);
+  };
+
+  for (const step of steps) {
+    for (const result of step.toolResults ?? []) harvest((result as { output?: unknown }).output);
+  }
+  return [...cards.values()];
+}
+
 export async function POST(req: Request) {
   const session = await requireSession();
   if (!session) {
@@ -140,31 +190,36 @@ export async function POST(req: Request) {
     content: userText,
   });
 
-  // Mort's write tools are built per turn and closed over THIS session's user,
-  // so nothing in the conversation can change who a write is attributed to.
-  // `onWritten` is the assistant's own re-index — core owns Outline and Qdrant,
-  // the assistant owns kb_documents, so the hook crosses that line explicitly.
-  const canWrite = await chatWritesEnabled();
-  const turnTools = await buildTurnTools({
-    user: actingUser(session),
+  // The tool belt is built per turn and closed over THIS session's user, so
+  // nothing said in the conversation can change who a write is attributed to.
+  // `seen` is this turn's set of doc ids Mort actually found — the guard that
+  // stops a write landing on a page he only guessed at. `onWritten` is the
+  // assistant's own re-index: core owns Outline and Qdrant, the assistant owns
+  // kb_documents, so the hook crosses that line explicitly.
+  const canWriteKb = await chatCanWriteKb();
+  const turnTools = await buildAgentTools({
     conversationId,
+    user: actingUserFromSession(session),
+    seen: new Set<string>(),
     onWritten: (docId) => syncDocumentById(docId),
   });
 
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(await buildSystemPrompt({ canWrite })),
+      ...systemPromptOptions(await buildSystemPrompt({ canWriteKb })),
       messages: modelMessages,
       tools: { ...turnTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
+        const pendingCards = collectPendingCards(steps);
         await db.insert(messages).values({
           conversationId,
           role: "assistant",
           content: text,
           sources,
+          pendingActions: pendingCards.length > 0 ? pendingCards : null,
         });
         await db
           .update(conversations)

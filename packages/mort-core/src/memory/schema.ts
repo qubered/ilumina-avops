@@ -175,26 +175,27 @@ export async function ensureMortSchema(): Promise<void> {
       created_at     timestamptz NOT NULL DEFAULT now()
     );
 
-    -- Confirm-then-live staging (MORT_V2_PLAN §I.4). A write tool called in chat
-    -- does NOT write — it parks the payload here and returns a pending id, which
-    -- the UI renders as a confirmation card. The write happens only when a named
-    -- human confirms, and attribution is stamped from THEIR session, never from
-    -- anything the model said.
+    -- Confirm-then-live queue (v2 P1). A write tool NEVER writes: it parks the
+    -- payload here with the preview the user was shown, and the write happens
+    -- only when a session-authenticated human confirms it. The model can
+    -- propose; it cannot commit. Rows expire (MORT_PENDING_TTL_HOURS) so an
+    -- ignored card is a no-op rather than a landmine.
     CREATE TABLE IF NOT EXISTS mort_pending_actions (
       id              uuid PRIMARY KEY,
       conversation_id uuid,
       user_id         text NOT NULL,          -- who Mort was talking to
-      tool            text NOT NULL,          -- apply_doc_edit | create_doc | attach_source | save_fact | log_event
+      tool            text NOT NULL,          -- save_fact | retire_fact | log_event
       payload         jsonb NOT NULL,
       preview         text,                   -- what was shown for confirmation
       status          text NOT NULL DEFAULT 'pending',  -- pending|confirmed|cancelled|expired
       created_at      timestamptz NOT NULL DEFAULT now(),
-      expires_at      timestamptz NOT NULL DEFAULT now() + interval '24 hours',
       decided_at      timestamptz,
-      decided_by      text
+      decided_by      text,                   -- session-derived, never model-supplied
+      result          jsonb                   -- what the executor did, for the audit trail
     );
-    CREATE INDEX IF NOT EXISTS mort_pending_open
-      ON mort_pending_actions (user_id, created_at DESC) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS mort_pending_open ON mort_pending_actions (created_at) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS mort_pending_by_convo ON mort_pending_actions (conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS mort_pending_by_user ON mort_pending_actions (user_id, created_at);
 
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);

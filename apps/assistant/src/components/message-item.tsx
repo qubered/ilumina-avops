@@ -4,9 +4,10 @@ import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Source } from "@/lib/db/schema";
+import type { ChatCard } from "@/lib/conversation-messages";
 import { stripTrailingSourcesList } from "@mort/core/kb/sources";
 import { FeedbackButtons } from "./feedback-buttons";
-import { isMortActionResult, MortActionCard, type MortActionResult } from "./mort-action-card";
+import { PendingActionCard } from "./pending-action-card";
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -39,36 +40,36 @@ function sourcesOf(message: UIMessage): Source[] {
 }
 
 /**
- * Tool parts whose output is a confirmation card rather than something for the
- * model to read on. Matched by output SHAPE as well as name, so a tool that
- * errors out or gets renamed degrades to no card instead of a broken one.
- *
- * These parts are not persisted with the message (the DB stores the answer
- * text), so cards live for the streamed turn. A pending action outlives its
- * card: it stays confirmable from the admin queue, and Mort can list it again
- * with list_pending.
+ * Confirmation cards: the persisted ones (with their live status) for DB
+ * messages, the freshly-raised ones from tool output while streaming.
  */
-const ACTION_TOOLS = new Set([
-  "tool-propose_doc_edit",
-  "tool-create_doc",
-  "tool-attach_source",
-  "tool-save_fact",
-  "tool-log_event",
-  "tool-brain_dump",
-  "tool-apply_doc_edit",
-  "tool-confirm_pending",
-]);
+function cardsOf(message: UIMessage): ChatCard[] {
+  const meta = message.metadata as { pendingActions?: ChatCard[] } | undefined;
+  if (meta?.pendingActions?.length) return meta.pendingActions;
 
-function actionResultsOf(message: UIMessage): MortActionResult[] {
-  const results: MortActionResult[] = [];
+  const live = new Map<string, ChatCard>();
   for (const part of message.parts) {
-    if (!ACTION_TOOLS.has(part.type) || !("output" in part)) continue;
-    if (isMortActionResult(part.output)) results.push(part.output);
+    if (!part.type.startsWith("tool-") || !("output" in part)) continue;
+    const output = part.output as
+      | { pendingId?: string; tool?: string; preview?: string; payload?: Record<string, unknown> }
+      | undefined;
+    if (!output?.pendingId || !output.tool) continue;
+    live.set(output.pendingId, {
+      id: output.pendingId,
+      tool: output.tool,
+      preview: output.preview ?? "",
+      payload: output.payload ?? {},
+      status: "pending",
+    });
   }
-  return results;
+  return [...live.values()];
 }
 
-/** Mort is mid-dump: the split is slow enough to need saying out loud. */
+/**
+ * Mort is mid-dump: splitting a wall of notes into pages, searching for each
+ * one's existing page and drafting a body takes long enough to need saying out
+ * loud, or the chat just sits silent.
+ */
 function isStructuring(message: UIMessage): boolean {
   return message.parts.some(
     (part) =>
@@ -143,9 +144,9 @@ export function MessageItem({
   }
 
   const sources = sourcesOf(message);
+  const cards = cardsOf(message);
   const searching = isSearching(message);
   const structuring = isStructuring(message);
-  const actions = actionResultsOf(message);
   const body = sources.length > 0 ? stripTrailingSourcesList(text) : text;
 
   return (
@@ -179,8 +180,8 @@ export function MessageItem({
           </ReactMarkdown>
         </div>
       )}
-      {actions.map((action, i) => (
-        <MortActionCard key={i} result={action} />
+      {cards.map((card) => (
+        <PendingActionCard key={card.id} card={card} compact={compact} />
       ))}
       {sources.length > 0 && (
         <div className="mt-3">

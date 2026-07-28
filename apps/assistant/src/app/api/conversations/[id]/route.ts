@@ -3,6 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages } from "@/lib/db";
+import { withPendingStatus } from "@/lib/conversation-messages";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
@@ -34,7 +35,7 @@ export async function GET(
     .where(eq(messages.conversationId, conversation.id))
     .orderBy(asc(messages.createdAt));
 
-  return NextResponse.json({ conversation, messages: rows });
+  return NextResponse.json({ conversation, messages: await withPendingStatus(rows) });
 }
 
 const patchSchema = z

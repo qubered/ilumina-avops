@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ActingUser } from "./policy";
+import type { ChatToolContext } from "./cards";
+import type { ActingUser } from "./pending-actions";
 
 /**
- * The write tools' routing, against fakes. What's under test is the promise the
- * whole feature rests on: a tool call NEVER writes. It either parks a payload
- * for a human to confirm, queues a proposal for review, or refuses — and which
- * of the three depends on role, mode and the target, not on the conversation.
+ * The write:kb routing, against fakes.
+ *
+ * What's under test is the promise the whole feature rests on: a tool call
+ * NEVER writes. It either parks a card for a human to confirm, queues a
+ * proposal for review, or refuses — and which of the three depends on role,
+ * mode and the target, not on how the conversation went.
  */
 
 const state = vi.hoisted(() => ({
   chatWrites: null as string | null,
   mode: "live" as string,
   threshold: 0.6,
-  pendingToday: 0,
+  raisedToday: 0,
   preview: null as Record<string, unknown> | null,
 }));
 
@@ -32,23 +35,17 @@ vi.mock("../memory/config", () => ({
   getEffectiveThreshold: async () => state.threshold,
 }));
 
-vi.mock("../memory/pending", () => ({
-  PENDING_DAILY_CAP: 30,
-  countPendingCreatedToday: async () => state.pendingToday,
+vi.mock("../memory/pending", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../memory/pending")>()),
+  countPendingActionsToday: async () => state.raisedToday,
   createPendingAction: async (input: Record<string, unknown>) => {
     parked.push(input);
     return { id: `pending-${parked.length}`, ...input };
   },
-  getPendingAction: async () => null,
-  claimPendingAction: async () => null,
-  releasePendingAction: async () => {},
-  listPendingActions: async () => [],
-  expireStalePendingActions: async () => 0,
 }));
 
 vi.mock("../kb/chat-write", () => ({
   chatSourceId: (id: string | null) => `chat:${id ?? "adhoc"}`,
-  executePendingAction: async () => ({ tool: "apply_doc_edit", summary: "done" }),
   previewDocEdit: async () => state.preview,
 }));
 
@@ -57,12 +54,15 @@ vi.mock("../kb/outline", () => ({
   documentUrl: (doc: { url: string }) => doc.url,
 }));
 
-vi.mock("../agent/dump", () => ({ splitDump: async () => ({ split: { pages: [], facts: [], events: [] } }), placeDumpPage: async () => ({}) }));
+vi.mock("./dump", () => ({
+  splitDump: async () => ({ split: { pages: [], facts: [], events: [] } }),
+  placeDumpPage: async () => ({}),
+}));
 
-const { buildKbWriteTools } = await import("./kb-write");
+const { buildKbTools } = await import("./kb-tools");
 
-const admin: ActingUser = { id: "u1", label: "jayden@qubered.com", role: "admin" };
-const member: ActingUser = { id: "u2", label: "crew@qubered.com", role: "member" };
+const admin: ActingUser = { id: "u1", email: "jayden@qubered.com", role: "admin" };
+const member: ActingUser = { id: "u2", email: "crew@qubered.com", role: "member" };
 
 const cleanPreview = {
   targetDocId: "doc-1",
@@ -70,7 +70,10 @@ const cleanPreview = {
   url: "/doc/doc-1",
   before: "old",
   after: "new",
-  diff: [{ kind: "remove", text: "old" }, { kind: "add", text: "new" }],
+  diff: [
+    { kind: "remove", text: "old" },
+    { kind: "add", text: "new" },
+  ],
   added: 1,
   removed: 1,
   changed: true,
@@ -80,30 +83,32 @@ const cleanPreview = {
 };
 
 function tools(user: ActingUser, seen: string[] = ["doc-1"]) {
-  return buildKbWriteTools({ user, conversationId: "conv-1", seen: new Set(seen) });
+  const ctx: ChatToolContext = { user, conversationId: "conv-1", seen: new Set(seen) };
+  return buildKbTools(ctx);
 }
 
 // The AI SDK types execute with a second call-options argument the tools ignore.
 const run = async (t: { execute?: unknown }, args: unknown) =>
   (await (t.execute as (a: unknown, o: unknown) => Promise<Record<string, unknown>>)(args, {})) ?? {};
 
-const EDIT = { targetDocId: "doc-1", regionBody: "new", rationale: "user says it's 7 not 3", confidence: 0.9 };
+const EDIT = { targetDocId: "doc-1", regionBody: "new", rationale: "user says it's 7, not 3", confidence: 0.9 };
 
 beforeEach(() => {
   state.chatWrites = null;
   state.mode = "live";
   state.threshold = 0.6;
-  state.pendingToday = 0;
+  state.raisedToday = 0;
   state.preview = { ...cleanPreview };
   parked.length = 0;
   reviewed.length = 0;
 });
 
 describe("propose_doc_edit", () => {
-  it("parks a confirmation card for a confident admin and writes nothing", async () => {
+  it("raises a card for a confident admin and writes nothing", async () => {
     const result = await run(tools(admin).propose_doc_edit, EDIT);
 
-    expect(result.status).toBe("pending_confirmation");
+    expect(result.status).toBe("pending");
+    expect(result.pendingId).toBe("pending-1");
     expect(result.diff).toEqual(cleanPreview.diff);
     expect(parked).toHaveLength(1);
     expect(parked[0].tool).toBe("apply_doc_edit");
@@ -132,7 +137,7 @@ describe("propose_doc_edit", () => {
     state.preview = { ...cleanPreview, appendsNewRegion: true, before: "", removed: 0 };
     const result = await run(tools(admin).propose_doc_edit, EDIT);
 
-    expect(result.status).toBe("pending_confirmation");
+    expect(result.status).toBe("pending");
     expect(String(result.preview)).toMatch(/no Mort section yet/i);
   });
 
@@ -140,8 +145,8 @@ describe("propose_doc_edit", () => {
     const result = await run(tools(admin, []).propose_doc_edit, EDIT);
 
     expect(result.status).toBe("queued_for_review");
-    // The guessed id is recorded in the rationale but not handed to the human
-    // as something to act on.
+    // The guessed id is recorded in the rationale but not handed to a human as
+    // something to act on.
     expect(reviewed[0].targetDocId).toBeNull();
     expect(reviewed[0].rationale).toContain("guessed");
   });
@@ -164,7 +169,7 @@ describe("propose_doc_edit", () => {
     state.preview = { ...cleanPreview, changed: false, added: 0, removed: 0 };
     const result = await run(tools(admin).propose_doc_edit, EDIT);
 
-    expect(result.status).toBe("error");
+    expect(result.error).toMatch(/already says exactly that/i);
     expect(parked).toHaveLength(0);
   });
 
@@ -175,11 +180,11 @@ describe("propose_doc_edit", () => {
     expect(result.warnings).toEqual([expect.stringMatching(/edited this page by hand/i)]);
   });
 
-  it("stops proposing once the user hits the daily cap", async () => {
-    state.pendingToday = 30;
+  it("stops raising cards once the user hits the daily limit", async () => {
+    state.raisedToday = 1000;
     const result = await run(tools(admin).propose_doc_edit, EDIT);
 
-    expect(result.status).toBe("blocked");
+    expect(result.error).toMatch(/daily limit/i);
     expect(parked).toHaveLength(0);
   });
 });
@@ -197,48 +202,48 @@ describe("create_doc", () => {
     confidence: 0.9,
   };
 
-  it("parks a preview card carrying Mort's metadata header", async () => {
+  it("parks a preview carrying Mort's metadata header", async () => {
     const result = await run(tools(admin).create_doc, NEW_PAGE);
 
-    expect(result.status).toBe("pending_confirmation");
-    const body = String(parked[0].payload && (parked[0].payload as Record<string, string>).regionBody);
+    expect(result.status).toBe("pending");
+    const body = String((parked[0].payload as Record<string, string>).regionBody);
     expect(body).toContain("Zone: PFA");
     expect(body).toContain("System: Comms");
+    expect(body).toContain("Entities: Riedel");
     expect(body).toContain("Source-Files: chat:conv-1");
     expect(body).toContain("Maintained-By: Mort");
     expect(body).toContain("## Layout");
   });
 
-  it("queues a member's new page for review", async () => {
+  it("queues a member's new page for review, keyed on its title", async () => {
     expect((await run(tools(member).create_doc, NEW_PAGE)).status).toBe("queued_for_review");
     expect(reviewed[0]).toMatchObject({ action: "CREATE", targetDocId: null });
+    // Two pages from one dump must not collapse onto one dedupe key.
+    expect(String(reviewed[0].dedupeKey)).toContain("Comms Rack — PFA");
   });
 });
 
-describe("save_fact and log_event", () => {
-  it("confirm-first for a member too — memory is Mort's own reversible state", async () => {
-    const result = await run(tools(member).save_fact, {
-      factKey: "LED wall height",
-      value: "6m",
-      scope: "Main Stage",
-      effectiveFrom: "2026-07-23",
-      note: null,
+describe("attach_source", () => {
+  it("parks a card naming the file and the page", async () => {
+    const result = await run(tools(admin).attach_source, {
+      targetDocId: "doc-1",
+      sourceId: "Video/rack.pdf",
+      rationale: "it's the rack drawing for that page",
     });
 
-    expect(result.status).toBe("pending_confirmation");
-    expect(parked[0].tool).toBe("save_fact");
+    expect(result.status).toBe("pending");
+    expect(parked[0].tool).toBe("attach_source");
+    expect(String(result.preview)).toContain("Video/rack.pdf");
   });
 
-  it("flags an undated event on the card rather than inventing a date", async () => {
-    const result = await run(tools(admin).log_event, {
-      actionText: "Ran SDI under the floor",
-      occurredOn: null,
-      event: null,
-      zone: [],
-      system: [],
-      entities: [],
+  it("won't attach to a page Mort only guessed at", async () => {
+    const result = await run(tools(admin, []).attach_source, {
+      targetDocId: "doc-9",
+      sourceId: "Video/rack.pdf",
+      rationale: "hunch",
     });
 
-    expect(result.warnings).toEqual([expect.stringMatching(/no date/i)]);
+    expect(result.status).toBe("queued_for_review");
+    expect(reviewed[0]).toMatchObject({ action: "ATTACH", targetDocId: null });
   });
 });

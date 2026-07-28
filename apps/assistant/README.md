@@ -147,7 +147,7 @@ Mort's chat tool belt is read **and** write (`MORT_V2_PLAN.md` §I.3–I.4). "Th
 
 The rules that make that safe are enforced in code, never in the prompt:
 
-- **No tool writes.** A write tool parks its payload in `mort_pending_actions` and returns a preview. The write happens in `POST /api/mort/actions/[id]`, run by a named human, with attribution taken from that human's **session** — never from the request body, never from the model.
+- **No tool writes.** A write tool parks its payload in `mort_pending_actions` and returns a preview. The write happens in `POST /api/mort/actions/[id]/confirm`, run by a named human, with attribution taken from that human's **session** — never from the request body, never from the model.
 - **Mort only edits his own region.** Every doc write goes through the v1 safe-write machinery (`<!-- mort:start -->` markers, per-doc locks, revision CAS, human-edit detection). Human content outside the markers is preserved byte-for-byte, a page Mort has never touched gets a region appended rather than rewritten, and a page with a *malformed* region is never auto-spliced — it goes to review.
 - **Policy tiers, resolved server-side** (`packages/mort-core/src/tools/policy.ts`): crew members can only propose (→ admin review queue); `shadow` mode turns every chat KB write into a proposal, admins included; a low-confidence edit, or one aimed at a doc id the model never actually found in a search result, goes to review.
 - **Kill switch**: admin page → *Chat writes: Frozen* stops every chat-originated write without touching questions and answers. Per-user cap of 30 proposals a day.
@@ -155,7 +155,7 @@ The rules that make that safe are enforced in code, never in the prompt:
 
 `brain_dump` handles the paste-a-wall-of-notes case: it splits the dump into pages, facts and events, then runs the *same* understand→gather machinery ingestion uses to find the existing page first — extending it beats creating a near-duplicate. New pages register in `mort_docs` under the same semantic registry key ingestion uses, so chat and ingestion maintain one registry, not two.
 
-Facts (`save_fact` — what is true *now*) and event-log entries (`log_event` — what the crew *did*, dated) use the same confirm-then-live cards, and are offered separately rather than buried in a page's prose.
+A dump's fact- and event-shaped statements come out as `save_fact` / `log_event` cards (the P1 teaching flow) rather than being buried in a page's prose — one dump fans out into pages *and* memory. A `Send to review` button on any wiki card hands it to an admin instead of applying it, which stays available even when applying doesn't (e.g. the mode flipped to shadow while the card sat there).
 
 
 The agent definition (`packages/mort-core/src/agent/index.ts`) is plain server-side code with no HTTP coupling, so a later Slack bot can import it directly.

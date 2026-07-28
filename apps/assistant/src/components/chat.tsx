@@ -2,16 +2,12 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Source } from "@/lib/db/schema";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChatMessage } from "@/lib/conversation-messages";
 import { MessageItem } from "./message-item";
+import { ACTION_DECIDED_EVENT } from "./pending-action-card";
 
-export type DbMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  sources: Source[] | null;
-};
+export type DbMessage = ChatMessage;
 
 export const STARTER_QUESTIONS = [
   "How do I patch a camera into the E2?",
@@ -24,7 +20,11 @@ function toUIMessages(dbMessages: DbMessage[]): UIMessage[] {
     id: m.id,
     role: m.role,
     parts: [{ type: "text" as const, text: m.content }],
-    metadata: { sources: m.sources ?? [], persisted: true },
+    metadata: {
+      sources: m.sources ?? [],
+      pendingActions: m.pendingActions ?? [],
+      persisted: true,
+    },
   }));
 }
 
@@ -71,27 +71,48 @@ export function Chat({
     initialMessages.length > 0 &&
     initialMessages[initialMessages.length - 1].role === "user";
 
+  // onFinish closes over the refresher defined below (it needs setMessages,
+  // which useChat hasn't returned yet at that point).
+  const refreshRef = useRef<(() => Promise<void>) | null>(null);
+
   const { messages, sendMessage, status, error, setMessages, clearError } =
     useChat({
       transport,
       resume: Boolean(conversationId) && openedMidAnswer,
       messages: toUIMessages(initialMessages),
       onFinish: async () => {
-        // Swap in the persisted messages so ids (needed for feedback) and
-        // deduped sources come from the database.
-        const id = convIdRef.current;
-        if (!id) return;
-        try {
-          const res = await fetch(`/api/conversations/${id}`);
-          if (res.ok) {
-            const data = (await res.json()) as { messages: DbMessage[] };
-            setMessages(toUIMessages(data.messages));
-          }
-        } catch {
-          // keep the streamed messages; feedback stays disabled for them
-        }
+        await refreshRef.current?.();
       },
     });
+
+  /**
+   * Swap in the persisted messages so ids (needed for feedback), deduped
+   * sources, and confirmation-card statuses all come from the database. Also
+   * how a confirmed card pulls in the outcome message the route appended.
+   */
+  const refresh = useCallback(async () => {
+    const id = convIdRef.current;
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (res.ok) {
+        const data = (await res.json()) as { messages: DbMessage[] };
+        setMessages(toUIMessages(data.messages));
+      }
+    } catch {
+      // keep the streamed messages; feedback stays disabled for them
+    }
+  }, [setMessages]);
+
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  useEffect(() => {
+    const onDecided = () => void refresh();
+    window.addEventListener(ACTION_DECIDED_EVENT, onDecided);
+    return () => window.removeEventListener(ACTION_DECIDED_EVENT, onDecided);
+  }, [refresh]);
 
   const busy = status === "submitted" || status === "streaming";
 

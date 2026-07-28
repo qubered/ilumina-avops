@@ -146,6 +146,10 @@ services:
       # the ingest service's MORT_MODE below.
       MORT_MODE: ${MORT_MODE:-off}
       MORT_DAILY_TOKEN_CAP: ${MORT_DAILY_TOKEN_CAP:-0}
+      # Confirm-then-live rails: how long a confirmation card the crew never
+      # answered stays clickable, and how many one person can raise in a day.
+      MORT_PENDING_TTL_HOURS: ${MORT_PENDING_TTL_HOURS:-24}
+      MORT_PENDING_DAILY_LIMIT: ${MORT_PENDING_DAILY_LIMIT:-30}
     ports:
       - "3001:3000"
     # For AI_PROVIDER=codex the app reads /codex-auth/auth.json. Don't edit
