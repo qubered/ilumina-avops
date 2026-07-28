@@ -281,10 +281,18 @@ export async function appendJournal(entry: {
   channel: JournalChannel;
   actor?: string | null;
   conversationId?: string | null;
+  /**
+   * Structured audit detail that doesn't fit the fixed columns (P5) — an MCP
+   * call's server, tool, args hash, outcome and latency. Never the raw
+   * arguments: those live on the pending-action row the user actually
+   * confirmed, and a journal that quietly accumulated tokens and door codes
+   * would be a worse liability than the audit trail is an asset.
+   */
+  details?: unknown;
 }): Promise<void> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts, actor, channel, conversation_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `INSERT INTO mort_journal (source_id, mort_id, outline_document_id, action, rationale, confidence, model, tokens, cost_usd, conflicts, actor, channel, conversation_id, details)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING id::int AS id`,
     [
       entry.sourceId ?? null,
@@ -300,6 +308,7 @@ export async function appendJournal(entry: {
       entry.actor ?? "system",
       entry.channel,
       entry.conversationId ?? null,
+      entry.details != null ? JSON.stringify(entry.details) : null,
     ],
   );
 

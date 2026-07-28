@@ -8,7 +8,7 @@ import { buildBelt } from "../tools/registry";
 import type { ToolContext } from "../tools/harness";
 import { actorLabelOf } from "../tools/harness";
 import type { Channel } from "../tools/types";
-import { buildSystemPrompt, chatCanWriteKb } from "./prompt";
+import { buildSystemPrompt, chatCanWriteKb, chatHasMcpTools } from "./prompt";
 import type { ActingUser } from "./pending-actions";
 
 /**
@@ -94,10 +94,19 @@ const actingUser = (actor: TurnContext["actor"]): ActingUser | null => (actor ==
  * preamble and nothing else. That split is deliberate and predates v2 — a
  * procedure page written in Mort's chat register would be worse documentation,
  * and it would outlive every conversation it was charming in.
+ *
+ * Takes the belt that was actually built rather than recomputing what it
+ * should contain: describing a tool the model doesn't have is how a model
+ * comes to invent one, and "should contain" and "contains" diverge for real
+ * reasons — an admin whose only enabled MCP server is unreachable gets no
+ * connected tools this turn.
  */
-async function systemFor(entry: TurnEntry): Promise<string> {
-  if (entry.kind === "chat") return buildSystemPrompt({ canWriteKb: await chatCanWriteKb() });
-  return MORT_AUTHORING_PREAMBLE;
+async function systemFor(entry: TurnEntry, tools: ToolSet): Promise<string> {
+  if (entry.kind !== "chat") return MORT_AUTHORING_PREAMBLE;
+  return buildSystemPrompt({
+    canWriteKb: await chatCanWriteKb(),
+    hasMcpTools: chatHasMcpTools(tools),
+  });
 }
 
 async function modelFor(ctx: TurnContext): Promise<LanguageModel> {
@@ -130,12 +139,14 @@ export async function prepareTurn(entry: TurnEntry, ctx: TurnContext): Promise<T
     conversationId: ctx.conversationId ?? null,
   });
 
-  const [tools, system, maxSteps, exceeded] = await Promise.all([
+  // The belt first, then the prompt from it — see systemFor. Everything else
+  // is independent of both.
+  const [tools, maxSteps, exceeded] = await Promise.all([
     buildBelt(toolContext),
-    systemFor(entry),
     getMaxSteps(ctx.channel),
     rail.exceeded(),
   ]);
+  const system = await systemFor(entry, tools);
 
   return {
     channel: ctx.channel,

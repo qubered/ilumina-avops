@@ -4,6 +4,7 @@ import { z } from "zod";
 import { executePendingAction, PAYLOAD_SCHEMAS, previewFor } from "@mort/core/agent/pending-actions";
 import { findCurrentFactByKey } from "@mort/core/memory";
 import { claimPendingAction, releasePendingAction, updatePendingPayload } from "@mort/core/memory/pending";
+import { resolveMcpCall } from "@mort/core/tools/policy";
 import { actingUserFromSession } from "@/lib/acting-user";
 import { conversations, db, messages } from "@/lib/db";
 import { guardDecision } from "@/lib/mort-actions";
@@ -27,6 +28,16 @@ export async function POST(req: Request, ctx: RouteContext<"/api/mort/actions/[i
 
   const body = bodySchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+
+  // A card that reaches equipment (P5) has its policy re-checked at the moment
+  // of execution, not just when Mort raised it: someone may have lost admin, or
+  // an admin may have hit the freeze switch, while the card sat on screen. This
+  // lives here rather than in guardDecision because guardDecision also fronts
+  // cancel, and calling something off must never be what gets blocked.
+  if (action.tool === "mcp_call") {
+    const route = await resolveMcpCall(actingUserFromSession(session), "write:world");
+    if (route.route === "blocked") return NextResponse.json({ error: route.reason }, { status: 403 });
+  }
 
   // Edited before confirming: re-validate against the tool's own schema and
   // re-render the preview, so what's stored is what the user actually agreed to.

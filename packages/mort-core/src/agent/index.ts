@@ -23,7 +23,14 @@ export {
   mortMemoryTool,
 } from "./read-tools";
 export { confirmPendingTool, listPendingTool, logEventTool, retireFactTool, saveFactTool } from "./memory-tools";
-export { buildSystemPrompt, chatCanWriteKb, MAX_STEPS, SYSTEM_PROMPT, WRITE_RULES } from "./prompt";
+export {
+  buildSystemPrompt,
+  chatCanWriteKb,
+  chatHasMcpTools,
+  MAX_STEPS,
+  SYSTEM_PROMPT,
+  WRITE_RULES,
+} from "./prompt";
 export { prepareTurn, runTurn } from "./run-turn";
 export type { TurnContext, TurnEntry, TurnPlan, TurnResult } from "./run-turn";
 // The belt itself, for callers assembling one outside a turn. Inside a turn,

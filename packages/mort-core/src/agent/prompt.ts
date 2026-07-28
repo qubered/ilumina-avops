@@ -1,4 +1,6 @@
+import type { ToolSet } from "ai";
 import { MORT_CHAT_VOICE, MORT_PERSONA } from "../identity";
+import { isMcpTool, MCP_RULES } from "../mcp";
 import { DEFAULT_MAX_STEPS } from "../memory/config";
 import { chatWritesEnabled } from "../tools/policy";
 import { isToolAllowed } from "../tools/registry";
@@ -121,6 +123,16 @@ export async function chatCanWriteKb(): Promise<boolean> {
 }
 
 /**
+ * Whether this turn's belt reaches connected equipment — gates MCP_RULES (P5).
+ * Asked of the belt that was actually built rather than recomputed, so the
+ * prompt can never describe a tool the model doesn't have: an admin whose only
+ * enabled server is unreachable gets no MCP tools this turn.
+ */
+export function chatHasMcpTools(tools: ToolSet): boolean {
+  return Object.keys(tools).some(isMcpTool);
+}
+
+/**
  * How Mort behaves once he can change the wiki (P3). Appended only when the
  * write:kb tools are actually on the belt — describing tools that aren't there
  * makes a model invent them.
@@ -158,7 +170,9 @@ export const WRITE_RULES = `Changing the knowledge base:
  * from the shared identity module — no network round trip, no cache, no
  * unreachable-fallback needed.
  */
-export async function buildSystemPrompt(opts: { canWriteKb?: boolean } = {}): Promise<string> {
+export async function buildSystemPrompt(
+  opts: { canWriteKb?: boolean; hasMcpTools?: boolean } = {},
+): Promise<string> {
   return [
     MORT_PERSONA,
     // Who he is, then how he talks. The voice is chat-only — the ingest agent
@@ -168,9 +182,11 @@ export async function buildSystemPrompt(opts: { canWriteKb?: boolean } = {}): Pr
     MORT_CHAT_VOICE,
     `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
-    // Last, so the write rules sit after the scope and safety rules they must
-    // never override (order: persona → voice → answering → capability).
+    // Last, so the capability rules sit after the scope and safety rules they
+    // must never override (order: persona → voice → answering → capability),
+    // and widest blast radius last of all.
     opts.canWriteKb ? WRITE_RULES : "",
+    opts.hasMcpTools ? MCP_RULES : "",
   ]
     .filter(Boolean)
     .join("\n\n");

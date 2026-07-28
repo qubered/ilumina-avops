@@ -45,6 +45,8 @@
     "./tools/policy": "./src/tools/policy.ts",
     "./tools/registry": "./src/tools/registry.ts",
     "./tools/harness": "./src/tools/harness.ts",
+    "./tools/audit": "./src/tools/audit.ts",
+    "./mcp": "./src/mcp/index.ts",
     "./agent": "./src/agent/index.ts",
     "./agent/cards": "./src/agent/cards.ts",
     "./agent/dump": "./src/agent/dump.ts",
@@ -62,6 +64,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.14",
+    "@ai-sdk/mcp": "^2.0.17",
     "@ai-sdk/openai": "^4.0.13",
     "@qdrant/js-client-rest": "^1.18.0",
     "ai": "^7.0.26",

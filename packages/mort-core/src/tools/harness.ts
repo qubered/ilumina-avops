@@ -76,13 +76,22 @@ async function refusalReason(spec: ToolSpec, ctx: ToolContext): Promise<string |
 }
 
 /**
- * Did the call work? The tools here return `{ error }` rather than throwing —
- * a KB outage should reach the model as a result it can explain, not kill the
- * stream — so a plain thrown/returned split would record most real failures as
- * successes.
+ * Did the call work? The tools here return `{ error }` or `{ status:
+ * "blocked" }` rather than throwing — a KB outage or a refused MCP call should
+ * reach the model as a result it can explain, not kill the stream — so a plain
+ * thrown/returned split would record most real failures, and every policy
+ * refusal a tool made for itself, as successes.
  */
 function outcomeOf(result: unknown): { outcome: ToolOutcome; detail: string | null } {
-  if (result && typeof result === "object" && "error" in result) {
+  if (!result || typeof result !== "object") return { outcome: "ok", detail: null };
+  // A tool that refused itself — `resolveKbWriteRoute`/`resolveMcpCall` said no
+  // inside the executor. Same outcome as a harness refusal, because from an
+  // auditor's point of view it is the same event.
+  if ((result as { status?: unknown }).status === "blocked") {
+    const reason = (result as { reason?: unknown }).reason;
+    return { outcome: "refused", detail: typeof reason === "string" ? reason : "blocked by policy" };
+  }
+  if ("error" in result) {
     const e = (result as { error: unknown }).error;
     return { outcome: "error", detail: typeof e === "string" ? e : "tool reported an error" };
   }

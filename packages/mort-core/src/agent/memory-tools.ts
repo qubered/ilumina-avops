@@ -118,6 +118,18 @@ export function confirmPendingTool(ctx: ChatToolContext) {
           : { error: "That confirmation was already decided." };
       }
 
+      // Cancelling by text is fine for anything; CONFIRMING by text is not,
+      // once the card reaches real equipment (P5). "Yeah" is a word the model
+      // has to interpret, and getting that wrong about a fact is an edit
+      // someone reverses while getting it wrong about a contactor is not. The
+      // button is one extra tap and it removes the interpretation entirely.
+      if (action.tool === "mcp_call") {
+        return {
+          error:
+            "This one runs on connected gear, so it can only be confirmed with the button on the card — tell them to press Confirm there.",
+        };
+      }
+
       // For a KB card the policy is re-checked at confirm time as well as at
       // propose time: the mode may have flipped to shadow, or chat writes been
       // frozen, between Mort offering the card and the user saying yes.

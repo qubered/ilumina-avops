@@ -25,6 +25,16 @@ const behaviour = vi.hoisted(() => ({ result: { ok: true } as unknown, throws: n
 vi.mock("../memory/settings", () => ({
   getSetting: async (key: string) => (key === "chat_writes" ? state.chatWrites : null),
 }));
+// P5's MCP half. Its own suite (mcp/belt.test.ts) covers what it decides; here
+// it only has to not reach the network, and to let the two admin-tier tools it
+// contributes be registered.
+vi.mock("../mcp", () => ({
+  buildMcpTools: async () => ({}),
+  buildMcpAdminTools: () => ({ mcp_servers: fake(), mcp_toggle: fake() }),
+  mcpTools: () => [],
+  isMcpTool: (name: string) => name.startsWith("mcp__"),
+  MCP_RULES: "",
+}));
 vi.mock("../memory/config", () => ({
   getEffectiveMode: async () => "live",
   getEffectiveThreshold: async () => 0.6,
@@ -37,7 +47,7 @@ vi.mock("../memory/tool-journal", () => ({
 
 // One stand-in executor behind every tool name: the registry only needs
 // something with an `execute`, and the harness only needs it to resolve.
-const fake = () =>
+const fake = vi.hoisted(() => () =>
   tool({
     description: "fake",
     inputSchema: z.looseObject({}),
@@ -45,7 +55,7 @@ const fake = () =>
       if (behaviour.throws) throw behaviour.throws;
       return behaviour.result;
     },
-  });
+  }));
 
 vi.mock("../agent/read-tools", () => ({
   buildKbSearchTool: fake,
@@ -124,7 +134,7 @@ describe("the registry is the one table of tiers", () => {
 });
 
 describe("belt assembly", () => {
-  it("hands a chat admin the read, teaching and wiki tools", async () => {
+  it("hands a chat admin the read, teaching, wiki and operator tools", async () => {
     const belt = await buildBelt(ctx());
     expect(Object.keys(belt).sort()).toEqual(
       [
@@ -138,6 +148,8 @@ describe("belt assembly", () => {
         "kb_search",
         "list_pending",
         "log_event",
+        "mcp_servers",
+        "mcp_toggle",
         "mort_memory",
         "propose_doc_edit",
         "retire_fact",
@@ -146,12 +158,16 @@ describe("belt assembly", () => {
     );
   });
 
-  it("gives a member the same belt — what differs is where their writes GO", async () => {
-    // Deliberate: a crew member proposing a correction is the feature working.
-    // resolveKbWriteRoute sends it to the review queue rather than Outline.
+  it("gives a member the same belt minus the operator tier", async () => {
+    // Deliberate that the wiki tools ARE there: a crew member proposing a
+    // correction is the feature working, and resolveKbWriteRoute sends it to
+    // the review queue rather than Outline. The admin-tier tools are a
+    // different question and the tier answers it.
     const belt = await buildBelt(ctx({ user: member }));
     expect(Object.keys(belt)).toContain("propose_doc_edit");
     expect(Object.keys(belt)).toContain("save_fact");
+    expect(Object.keys(belt)).not.toContain("mcp_servers");
+    expect(Object.keys(belt)).not.toContain("mcp_toggle");
   });
 
   it("hands the ingest channel nothing but the read tools", async () => {

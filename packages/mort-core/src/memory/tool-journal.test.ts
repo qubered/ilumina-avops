@@ -25,12 +25,18 @@ describe("argsHash", () => {
   });
 
   it("handles the shapes a tool call actually arrives in", async () => {
+    // Including no arguments at all: list_pending and mcp_servers take none,
+    // and the audit row is not optional for them.
     for (const value of [undefined, null, {}, [], "text", 42, { nested: [{ a: null }] }]) {
-      expect(argsHash(value)).toMatch(/^[0-9a-f]{32}$/);
+      expect(argsHash(value)).toMatch(/^[0-9a-f]{16}$/);
     }
   });
 
-  it("treats an absent key and an explicitly-undefined one as the same call", async () => {
-    expect(argsHash({ a: 1, b: undefined })).toBe(argsHash({ a: 1 }));
+  it("is the same hasher the MCP journal entries use", async () => {
+    // `mort_tool_calls.args_hash` and `mort_journal.details.argsHash` describe
+    // the same call from two angles; they have to agree or neither can be read
+    // against the other.
+    const { hashArgs } = await import("../tools/audit");
+    expect(argsHash({ server: "venue-pdu", port: 3 })).toBe(hashArgs({ port: 3, server: "venue-pdu" }));
   });
 });

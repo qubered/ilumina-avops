@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { pool } from "./db";
+import { hashArgs } from "../tools/audit";
 import type { Channel, ToolTier } from "../tools/types";
 
 /**
@@ -38,24 +38,11 @@ export type ToolCallEntry = {
 const DETAIL_LIMIT = 500;
 
 /**
- * A stable fingerprint of a call's arguments.
- *
- * Object key order is normalised so the same call hashes the same however the
- * model happened to serialise it — otherwise "was this the same call as an
- * hour ago" is unanswerable, which is most of what an args hash is for.
+ * A stable fingerprint of a call's arguments — `tools/audit.ts`'s hasher, so
+ * this table and the MCP journal entries in `mort_journal.details` fingerprint
+ * the same call identically and can be read against each other.
  */
-export function argsHash(args: unknown): string {
-  return createHash("sha256").update(stableStringify(args)).digest("hex").slice(0, 32);
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
-}
+export const argsHash = hashArgs;
 
 /**
  * Record one call. Never throws: a turn must not fail because its audit row

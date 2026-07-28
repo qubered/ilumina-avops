@@ -15,6 +15,7 @@ import {
   saveFactTool,
 } from "../agent/memory-tools";
 import { attachSourceTool, brainDumpTool, createDocTool, proposeDocEditTool } from "../agent/kb-tools";
+import { buildMcpAdminTools, buildMcpTools, mcpTools } from "../mcp";
 import { chatWritesEnabled, isTierAllowed } from "./policy";
 import { harness, type ToolContext } from "./harness";
 import type { ActorRole, Channel, ToolTier } from "./types";
@@ -123,17 +124,45 @@ export const TOOL_SPECS: ToolSpec[] = [
     enabled: kbWritesOn,
     build: (ctx) => brainDumpTool(chatCtx(ctx)),
   },
+
+  // --- admin — the console, in chat form (P5) ------------------------------
+  //
+  // Not "things Mort decides", things an admin does through Mort because a
+  // conversation is a faster console than the console. Built as a pair by
+  // buildMcpAdminTools and picked apart here so each is a registered tool with
+  // its own row in the tier table.
+  {
+    name: "mcp_servers",
+    tier: "admin",
+    requiresUser: true,
+    build: (ctx) => buildMcpAdminTools(chatCtx(ctx)).mcp_servers,
+  },
+  {
+    name: "mcp_toggle",
+    tier: "admin",
+    requiresUser: true,
+    build: (ctx) => buildMcpAdminTools(chatCtx(ctx)).mcp_toggle,
+  },
 ];
 
 const BY_NAME = new Map(TOOL_SPECS.map((s) => [s.name, s]));
 
 /**
- * `apply_doc_edit` never appears on a belt — it is the parked form of a
- * propose_doc_edit, only ever reached by confirming a card — but it does carry
- * a tier, checked when a card is confirmed. Declared here so the one table of
- * tiers stays complete.
+ * Tools that carry a tier but never appear on a belt, because they only exist
+ * as a parked card:
+ *
+ * - `apply_doc_edit` is the parked form of a propose_doc_edit.
+ * - `mcp_call` is the parked form of ANY MCP tool — every call parks under
+ *   this one name whatever the server called it, so the card, the confirm
+ *   route and the executor all have a fixed name whose tier they can check.
+ *
+ * Declared here so the one table of tiers stays complete, and cross-checked
+ * against `pendingToolTier` by the registry's test.
  */
-export const CARD_ONLY_TIERS: Record<string, ToolTier> = { apply_doc_edit: "write:kb" };
+export const CARD_ONLY_TIERS: Record<string, ToolTier> = {
+  apply_doc_edit: "write:kb",
+  mcp_call: "write:world",
+};
 
 /** Every tool's tier, registry-derived. The one table; nothing hand-maintained. */
 export const TOOL_TIERS: Record<string, ToolTier> = Object.fromEntries([
@@ -186,5 +215,40 @@ export async function buildBelt(ctx: ToolContext): Promise<ToolSet> {
     if (spec.enabled && !(await spec.enabled(ctx))) continue;
     belt[spec.name] = harness(spec, spec.build(ctx), ctx);
   }
+  for (const [name, spec, built] of await discoveredTools(ctx, role)) {
+    belt[name] = harness(spec, built, ctx);
+  }
   return belt;
+}
+
+/**
+ * The MCP half of the belt (P5), wrapped by the same harness as everything
+ * else.
+ *
+ * These can't be `TOOL_SPECS` entries: a connected server's tools are
+ * discovered at runtime and their tiers come from the server's registry row,
+ * so the spec is synthesised per tool per turn. `buildMcpTools` has already
+ * applied its own gating (role, reachability, the `mcp` master switch) — the
+ * harness adds what it doesn't do, which is the uniform `mort_tool_calls` row
+ * and the call-time tier re-check.
+ */
+async function discoveredTools(
+  ctx: ToolContext,
+  role: ActorRole,
+): Promise<Array<[string, ToolSpec, ToolSet[string]]>> {
+  if (ctx.channel !== "chat" || !ctx.user) return [];
+  const built = await buildMcpTools(chatCtx(ctx), ctx.channel);
+  if (Object.keys(built).length === 0) return [];
+
+  const tiers = new Map(mcpTools().map((t) => [t.name, t.tier]));
+  const out: Array<[string, ToolSpec, ToolSet[string]]> = [];
+  for (const [name, tool] of Object.entries(built)) {
+    // A tool the manager no longer knows the tier of is treated as write:world
+    // — the most cautious answer, and the same default a server's tools get
+    // before an admin has said anything about them.
+    const tier = tiers.get(name) ?? "write:world";
+    if (!isTierAllowed(tier, ctx.channel, role)) continue;
+    out.push([name, { name, tier, channels: ["chat"], requiresUser: true, build: () => tool }, tool]);
+  }
+  return out;
 }

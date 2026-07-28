@@ -194,6 +194,10 @@ export async function POST(req: Request) {
   // and Qdrant, the assistant owns kb_documents, so the hook crosses that line
   // explicitly. Streaming is why this route calls prepareTurn rather than
   // runTurn — same plan, different way of getting the bytes out.
+  //
+  // The prompt comes back already matched to the belt that was actually built,
+  // MCP tools included: an admin whose only enabled server is unreachable gets
+  // no connected tools this turn, so the prompt must not describe any.
   const plan = await prepareTurn(
     { kind: "chat", messages: modelMessages },
     {
