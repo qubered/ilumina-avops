@@ -40,12 +40,19 @@ const TITLES: Record<string, string> = {
   save_fact: "Remember this?",
   retire_fact: "Forget this?",
   log_event: "Add to the event log?",
+  apply_doc_edit: "Correct this page?",
+  create_doc: "Write this page?",
+  attach_source: "Attach this file?",
 };
+
+/** A wiki change can be handed to an admin instead of applied (P3). */
+const KB_TOOLS = new Set(["apply_doc_edit", "create_doc", "attach_source"]);
 
 const DECIDED: Record<string, string> = {
   confirmed: "Confirmed",
   cancelled: "Dropped — nothing was written",
   expired: "Expired — ask again if it still stands",
+  queued_for_review: "Sent to the admin review queue",
 };
 
 function BrainIcon() {
@@ -69,10 +76,12 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
   const [edited, setEdited] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [divertedToReview, setDivertedToReview] = useState(false);
 
   const fields = EDITABLE[card.tool] ?? [];
+  const isKbChange = KB_TOOLS.has(card.tool);
 
-  async function decide(decision: "confirm" | "cancel") {
+  async function decide(decision: "confirm" | "cancel" | "review") {
     setBusy(true);
     setError(null);
     try {
@@ -100,7 +109,11 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
         if (res.status === 409 || res.status === 410) setStatus(res.status === 410 ? "expired" : "confirmed");
         return;
       }
+      // "review" ends the CARD without a write, which is a cancellation as far
+      // as mort_pending_actions is concerned — the proposal now lives in the
+      // admin queue. The label below says which of the two actually happened.
       setStatus(decision === "confirm" ? "confirmed" : "cancelled");
+      if (decision === "review") setDivertedToReview(true);
       setEditing(false);
       window.dispatchEvent(new Event(ACTION_DECIDED_EVENT));
     } catch {
@@ -120,7 +133,9 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
             <BrainIcon />
           </span>
           <span className="truncate">{card.preview}</span>
-          <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide">{DECIDED[status]}</span>
+          <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide">
+            {divertedToReview ? DECIDED.queued_for_review : DECIDED[status]}
+          </span>
         </div>
       </div>
     );
@@ -162,7 +177,21 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
         </p>
       )}
 
-      <div className="mt-2.5 flex items-center gap-1.5">
+      {card.diff && card.diff.length > 0 && <RegionDiff lines={card.diff} />}
+
+      {(card.warnings ?? []).map((w) => (
+        <p key={w} className="mt-1.5 rounded border border-[color:var(--highlight)] bg-[color:var(--highlight)]/15 px-2 py-1 text-[12px] text-text-2">
+          {w}
+        </p>
+      ))}
+
+      {card.docUrl && (
+        <a href={card.docUrl} target="_blank" rel="noreferrer" className="mt-1.5 inline-block text-[12px] text-link underline">
+          Open the page
+        </a>
+      )}
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => decide("confirm")}
@@ -181,6 +210,17 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
             {editing ? "Done editing" : "Edit"}
           </button>
         )}
+        {isKbChange && (
+          <button
+            type="button"
+            onClick={() => decide("review")}
+            disabled={busy}
+            className="rounded border border-divider px-2.5 py-1 text-xs font-medium text-text-2 hover:bg-canvas-2 disabled:opacity-50"
+            title="Put this in front of an admin instead of applying it now"
+          >
+            Send to review
+          </button>
+        )}
         <button
           type="button"
           onClick={() => decide("cancel")}
@@ -189,9 +229,43 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
         >
           Cancel
         </button>
-        <span className="ml-auto text-[11px] text-text-3">Nothing is saved until you confirm</span>
+        <span className="ml-auto text-[11px] text-text-3">
+          {isKbChange ? "The wiki is unchanged until you confirm" : "Nothing is saved until you confirm"}
+        </span>
       </div>
       {error && <p className="mt-1.5 text-[12px] text-danger">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * The before/after of Mort's region.
+ *
+ * Colour alone can't carry the meaning — colour-blind crew, a phone screen in
+ * daylight at the back of a venue — so every line keeps its +/− gutter mark.
+ */
+function RegionDiff({ lines }: { lines: NonNullable<ChatCard["diff"]> }) {
+  return (
+    <pre className="mt-2 max-h-72 overflow-auto rounded border border-code-border bg-code p-2 text-[12px] leading-[1.5]">
+      <code>
+        {lines.map((line, i) => (
+          <div
+            key={i}
+            className={
+              line.kind === "add"
+                ? "text-success"
+                : line.kind === "remove"
+                  ? "text-danger line-through decoration-danger/40"
+                  : "text-text-3"
+            }
+          >
+            <span className="select-none opacity-60">
+              {line.kind === "add" ? "+ " : line.kind === "remove" ? "\u2212 " : "\u00a0\u00a0"}
+            </span>
+            {line.text || "\u00a0"}
+          </div>
+        ))}
+      </code>
+    </pre>
   );
 }

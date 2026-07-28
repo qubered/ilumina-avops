@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PENDING_TOOLS } from "../memory/pending";
 import {
   actorLabel,
   logEventPayload,
@@ -52,7 +53,11 @@ describe("confirmation previews", () => {
 
 describe("payload schemas", () => {
   it("covers every tool that can raise a card", () => {
-    expect(Object.keys(PAYLOAD_SCHEMAS).sort()).toEqual(["log_event", "retire_fact", "save_fact"]);
+    // Asserted against PENDING_TOOLS rather than a hardcoded list: a new tool
+    // that can park a payload but has no schema to validate it against is the
+    // bug this is here to catch, and it should fail the moment that tool is
+    // added — not the next time someone remembers to update this line.
+    expect(Object.keys(PAYLOAD_SCHEMAS).sort()).toEqual([...PENDING_TOOLS].sort());
   });
 
   it("rejects dates that aren't dates", () => {

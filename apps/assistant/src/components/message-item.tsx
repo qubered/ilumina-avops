@@ -66,6 +66,20 @@ function cardsOf(message: UIMessage): ChatCard[] {
   return [...live.values()];
 }
 
+/**
+ * Mort is mid-dump: splitting a wall of notes into pages, searching for each
+ * one's existing page and drafting a body takes long enough to need saying out
+ * loud, or the chat just sits silent.
+ */
+function isStructuring(message: UIMessage): boolean {
+  return message.parts.some(
+    (part) =>
+      part.type === "tool-brain_dump" &&
+      "state" in part &&
+      (part.state === "input-streaming" || part.state === "input-available"),
+  );
+}
+
 function isSearching(message: UIMessage): boolean {
   return message.parts.some(
     (part) =>
@@ -222,11 +236,15 @@ export function MessageItem({
   const cards = cardsOf(message);
   const provenance = provenanceOf(message);
   const searching = isSearching(message);
+  const structuring = isStructuring(message);
   const body = sources.length > 0 ? stripTrailingSourcesList(text) : text;
 
   return (
     <div id={anchor} className={`message-in scroll-mt-6 ${compact ? "text-sm" : ""} ${flash}`}>
-      {searching && !text && (
+      {structuring && !text && (
+        <p className="soft-pulse text-sm text-text-3">Working out what goes where…</p>
+      )}
+      {searching && !structuring && !text && (
         <p className="soft-pulse text-sm text-text-3">Searching the knowledge base…</p>
       )}
       {body && (

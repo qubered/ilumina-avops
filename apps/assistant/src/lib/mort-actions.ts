@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { getPendingAction, type PendingAction } from "@mort/core/memory/pending";
-import { isToolAllowed } from "@mort/core/tools/policy";
+import { getPendingAction, isKbWriteTool, type PendingAction } from "@mort/core/memory/pending";
+import { isToolAllowed, resolveKbWriteRoute } from "@mort/core/tools/policy";
+import { actingUserFromSession } from "@/lib/acting-user";
 import { requireSession, type Session } from "@/lib/auth";
 import { conversations, db } from "@/lib/db";
 
@@ -26,7 +27,18 @@ const fail = (status: number, error: string): Decision => ({
   response: NextResponse.json({ error }, { status }),
 });
 
-export async function guardDecision(params: Promise<{ id: string }> | { id: string }): Promise<Decision> {
+export async function guardDecision(
+  params: Promise<{ id: string }> | { id: string },
+  opts: {
+    /**
+     * Skip the "may this still be applied" check. Set by the review route:
+     * diverting a card to the admin queue is the SAFE outcome, so it must stay
+     * available precisely when applying no longer is (mode flipped to shadow
+     * while the card sat there).
+     */
+    allowNonApplicable?: boolean;
+  } = {},
+): Promise<Decision> {
   const session = await requireSession();
   if (!session) return fail(401, "Unauthorized");
 
@@ -46,6 +58,14 @@ export async function guardDecision(params: Promise<{ id: string }> | { id: stri
   }
   if (!isToolAllowed(action.tool, "chat")) {
     return fail(403, "That action isn't allowed from chat.");
+  }
+  // A KB card gets its routing re-checked too, not just its tier: shadow mode,
+  // the chat-writes freeze and the caller's role are all runtime state that may
+  // have changed since Mort raised the card. "Send to review" is still open in
+  // that case — see the review route, which deliberately skips this check.
+  if (isKbWriteTool(action.tool) && !opts.allowNonApplicable) {
+    const route = await resolveKbWriteRoute(actingUserFromSession(session));
+    if (route.route !== "apply") return fail(403, route.reason);
   }
 
   // The card names a conversation; make sure it's still this user's.

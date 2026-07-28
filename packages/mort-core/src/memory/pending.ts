@@ -13,8 +13,29 @@ import { pool } from "./db";
  * rows and one CAS transition out of `pending`.
  */
 
-export type PendingTool = "save_fact" | "retire_fact" | "log_event";
-export const PENDING_TOOLS: PendingTool[] = ["save_fact", "retire_fact", "log_event"];
+export type PendingTool =
+  | "save_fact"
+  | "retire_fact"
+  | "log_event"
+  // write:kb (P3). `apply_doc_edit` is the parked form of a propose_doc_edit —
+  // the tool proposes, the card applies.
+  | "apply_doc_edit"
+  | "create_doc"
+  | "attach_source";
+
+export const PENDING_TOOLS: PendingTool[] = [
+  "save_fact",
+  "retire_fact",
+  "log_event",
+  "apply_doc_edit",
+  "create_doc",
+  "attach_source",
+];
+
+/** KB cards can be diverted to the admin review queue; memory cards cannot. */
+export function isKbWriteTool(tool: PendingTool): boolean {
+  return tool === "apply_doc_edit" || tool === "create_doc" || tool === "attach_source";
+}
 
 export function isPendingTool(v: unknown): v is PendingTool {
   return typeof v === "string" && (PENDING_TOOLS as string[]).includes(v);

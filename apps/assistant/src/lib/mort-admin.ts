@@ -14,8 +14,10 @@ import {
   resolveReview,
   retireFact as coreRetireFact,
   saveFactSuperseding,
+  setSetting,
   type MortFact as CoreMortFact,
 } from "@mort/core/memory";
+import { chatWritesEnabled } from "@mort/core/tools/policy";
 import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob, tokensToday } from "@mort/core/memory/jobs";
 import { listRecentPendingActions, type PendingAction } from "@mort/core/memory/pending";
 
@@ -91,14 +93,26 @@ export async function decideReview(
 }
 
 export type MortMode = "off" | "shadow" | "live";
-export type MortConfig = { mode: MortMode; threshold: number; envDefault: string };
+export type MortConfig = { mode: MortMode; threshold: number; envDefault: string; chatWrites: boolean };
 
 export async function getMortConfig(): Promise<MortConfig> {
   return {
     mode: await getEffectiveMode(),
     threshold: await getEffectiveThreshold(),
     envDefault: coreEnv.MORT_MODE,
+    chatWrites: await chatWritesEnabled(),
   };
+}
+
+/**
+ * The chat-write kill switch (MORT_V2_PLAN §IV). Separate from `mode` on
+ * purpose: `mode` governs what the ingest pipeline does with files, this
+ * governs whether a conversation can change the wiki at all. Turning it off
+ * leaves Q&A working exactly as before.
+ */
+export async function setChatWrites(enabled: boolean): Promise<void> {
+  await setSetting("chat_writes", enabled ? "on" : "off");
+  console.log(`[mort] chat writes ${enabled ? "enabled" : "disabled"} via admin`);
 }
 
 export type MortHealth = {

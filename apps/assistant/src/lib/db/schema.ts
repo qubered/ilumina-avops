@@ -27,6 +27,12 @@ export type PendingCardRef = {
   tool: string;
   preview: string;
   payload: Record<string, unknown>;
+  // Doc-edit extras (P3). Stored rather than recomputed on render: the diff is
+  // what the user was ASKED to approve, and re-deriving it later would show
+  // them a different page than the one they agreed to.
+  diff?: Array<{ kind: "context" | "add" | "remove"; text: string }>;
+  docUrl?: string;
+  warnings?: string[];
 };
 
 /**

@@ -35,9 +35,16 @@
     "./kb/sync-lock": "./src/kb/sync-lock.ts",
     "./kb/write-deps": "./src/kb/write-deps.ts",
     "./kb/execute": "./src/kb/execute.ts",
+    "./kb/diff": "./src/kb/diff.ts",
+    "./kb/mort-header": "./src/kb/mort-header.ts",
+    "./kb/chat-write": "./src/kb/chat-write.ts",
+    "./tools/policy": "./src/tools/policy.ts",
     "./agent": "./src/agent/index.ts",
-    "./agent/pending-actions": "./src/agent/pending-actions.ts",
-    "./tools/policy": "./src/tools/policy.ts"
+    "./agent/cards": "./src/agent/cards.ts",
+    "./agent/dump": "./src/agent/dump.ts",
+    "./agent/gather": "./src/agent/gather.ts",
+    "./agent/kb-tools": "./src/agent/kb-tools.ts",
+    "./agent/pending-actions": "./src/agent/pending-actions.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

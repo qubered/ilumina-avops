@@ -7,6 +7,7 @@ import { claimPendingAction, releasePendingAction, updatePendingPayload } from "
 import { actingUserFromSession } from "@/lib/acting-user";
 import { conversations, db, messages } from "@/lib/db";
 import { guardDecision } from "@/lib/mort-actions";
+import { syncDocumentById } from "@/lib/rag/sync";
 
 /**
  * Confirm a card: the moment a proposal becomes a write (MORT_V2_PLAN I.4).
@@ -54,7 +55,13 @@ export async function POST(req: Request, ctx: RouteContext<"/api/mort/actions/[i
 
   let summary: string;
   try {
-    ({ summary } = await executePendingAction(claimed, actingUserFromSession(session)));
+    // onWritten re-indexes a page the moment it changes, so the correction is
+    // searchable in the very next answer instead of at the nightly sync. Core
+    // owns Outline and Qdrant; the assistant owns kb_documents — this hook is
+    // where that line is crossed, explicitly.
+    ({ summary } = await executePendingAction(claimed, actingUserFromSession(session), {
+      onWritten: (docId) => syncDocumentById(docId),
+    }));
   } catch (err) {
     // Nothing landed — put the card back rather than leaving it reading as done.
     await releasePendingAction(action.id).catch(() => {});

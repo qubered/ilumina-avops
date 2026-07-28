@@ -11,17 +11,10 @@ import { searchKb } from "@mort/core/kb/store";
  * decides with no KB context rather than the whole ingest turn dying.
  */
 
-export type KbHit = {
-  docId: string;
-  title: string;
-  url: string;
-  breadcrumb: string;
-  score: number;
-  text: string;
-  zone?: string[];
-  system?: string[];
-  docType?: string[];
-};
+// The hit shape moved into core with gather() (v2/P3); re-exported here so the
+// pipeline's existing imports are unchanged.
+export type { KbHit } from "@mort/core/agent/gather";
+import type { KbHit } from "@mort/core/agent/gather";
 
 export async function kbSearch(query: string, limit = 5): Promise<KbHit[]> {
   try {

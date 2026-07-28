@@ -1,6 +1,5 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import { env } from "../env";
 import { MORT_CHAT_VOICE, MORT_PERSONA } from "../identity";
 import {
   eventProvenance,
@@ -13,17 +12,19 @@ import {
 import { describeProvenance, eventChipFrom, factChip, type ProvenanceChip } from "../memory/provenance";
 import {
   claimPendingAction,
-  countPendingActionsToday,
-  createPendingAction,
   getPendingAction,
+  isKbWriteTool,
   listPendingActions,
   releasePendingAction,
-  type PendingTool,
 } from "../memory/pending";
 import { embedQuery } from "../kb/embeddings";
 import { searchEvents } from "../kb/events-store";
+import { documentUrl, getDocumentOrNull } from "../kb/outline";
+import { extractMortRegion } from "../kb/region";
 import { searchKb } from "../kb/store";
-import { isToolAllowed } from "../tools/policy";
+import { chatWritesEnabled, isToolAllowed, resolveKbWriteRoute } from "../tools/policy";
+import { raiseCard, type ChatToolContext, type PendingCard, type ToolFailure } from "./cards";
+import { buildKbTools } from "./kb-tools";
 import {
   executePendingAction,
   logEventPayload,
@@ -35,6 +36,7 @@ import {
 
 export { getChatModel, getChatStack, systemPromptOptions } from "../model/chat";
 export type { ActingUser } from "./pending-actions";
+export type { ChatToolContext, PendingCard } from "./cards";
 
 /**
  * Agent definition kept importable/server-side so a later Slack bot phase can
@@ -141,6 +143,8 @@ Provenance — where your knowledge came from:
 export const MAX_STEPS = 10;
 
 export type KbSearchResult = {
+  /** The Outline document id — the only ids a write tool will act on. */
+  docId: string;
   breadcrumb: string;
   title: string;
   url: string;
@@ -148,35 +152,90 @@ export type KbSearchResult = {
   text: string;
 };
 
-export const kbSearchTool = tool({
-  description:
-    "Search the ILUMINA AV Ops knowledge base. Returns the most relevant KB chunks with their source page titles and URLs. Use focused queries; search multiple times for multi-part questions.",
-  inputSchema: z.object({
-    query: z.string().describe("A focused search query about AV operations at ILUMINA"),
-  }),
-  execute: async ({ query }): Promise<KbSearchResult[] | { error: string }> => {
-    try {
-      const vector = await embedQuery(query);
-      const hits = await searchKb(vector, 5);
-      return hits.map((h) => ({
-        breadcrumb: h.breadcrumb,
-        title: h.title,
-        url: h.url,
-        score: h.score,
-        text: h.text,
-      }));
-    } catch (err) {
-      // Return the failure as a tool result instead of throwing: the model
-      // can then tell the user the KB is unreachable rather than the whole
-      // stream dying (graceful degradation, brief §12).
-      console.error("[kb_search] failed:", err);
-      return {
-        error:
-          "Knowledge base search is unavailable right now (vector store or embedding service unreachable). Tell the user you cannot search the KB at the moment and to try again shortly — do not answer from memory.",
-      };
-    }
-  },
-});
+/**
+ * kb_search, optionally bound to a turn's set of seen doc ids.
+ *
+ * That set is the invented-target guard (P3): a write tool will only touch a
+ * page Mort actually found. Without it a model will cheerfully emit a
+ * plausible-looking id that either 403s against Outline or, far worse, lands on
+ * a real but wrong page.
+ */
+export function buildKbSearchTool(seen?: Set<string>) {
+  return tool({
+    description:
+      "Search the ILUMINA AV Ops knowledge base. Returns the most relevant KB chunks with their document ids, source page titles and URLs. Use focused queries; search multiple times for multi-part questions.",
+    inputSchema: z.object({
+      query: z.string().describe("A focused search query about AV operations at ILUMINA"),
+    }),
+    execute: async ({ query }): Promise<KbSearchResult[] | { error: string }> => {
+      try {
+        const vector = await embedQuery(query);
+        const hits = await searchKb(vector, 5);
+        for (const h of hits) seen?.add(h.docId);
+        return hits.map((h) => ({
+          docId: h.docId,
+          breadcrumb: h.breadcrumb,
+          title: h.title,
+          url: h.url,
+          score: h.score,
+          text: h.text,
+        }));
+      } catch (err) {
+        // Return the failure as a tool result instead of throwing: the model
+        // can then tell the user the KB is unreachable rather than the whole
+        // stream dying (graceful degradation, brief §12).
+        console.error("[kb_search] failed:", err);
+        return {
+          error:
+            "Knowledge base search is unavailable right now (vector store or embedding service unreachable). Tell the user you cannot search the KB at the moment and to try again shortly — do not answer from memory.",
+        };
+      }
+    },
+  });
+}
+
+export const kbSearchTool = buildKbSearchTool();
+
+/**
+ * Read one KB page in full, with the human's half of it separated from Mort's.
+ *
+ * Necessary before proposing an edit: propose_doc_edit replaces Mort's region
+ * wholesale, so without seeing the current region an "edit" silently deletes
+ * everything he didn't happen to repeat.
+ */
+export function buildKbGetDocTool(seen?: Set<string>) {
+  return tool({
+    description:
+      "Read a KB page in full by its document id (from a kb_search result). Returns the page's human-written " +
+      "content and, separately, Mort's own maintained section. ALWAYS call this before proposing an edit — the " +
+      "edit replaces Mort's section wholesale, so you need its current content to change one part of it.",
+    inputSchema: z.object({
+      docId: z.string().describe("The Outline document id, exactly as kb_search returned it."),
+    }),
+    execute: async ({ docId }): Promise<Record<string, unknown>> => {
+      try {
+        const doc = await getDocumentOrNull(docId);
+        if (!doc) return { error: `No KB page with id '${docId}'. Search for it first.` };
+        seen?.add(doc.id);
+        const region = extractMortRegion(doc.text);
+        return {
+          docId: doc.id,
+          title: doc.title,
+          url: documentUrl(doc),
+          fullText: doc.text,
+          mortRegion: region,
+          note:
+            region == null
+              ? "This page has no Mort section yet — an edit appends one and leaves the existing content untouched."
+              : "Only mortRegion is yours to rewrite. Everything else on the page is a human's and is preserved byte-for-byte.",
+        };
+      } catch (err) {
+        console.error("[kb_get_doc] failed:", err);
+        return { error: "Could not read that page from Outline right now." };
+      }
+    },
+  });
+}
 
 /**
  * A tool result that carries its own attribution (P2). `provenance` is the
@@ -312,63 +371,6 @@ export const agentTools = {
 
 // --- Teaching: the confirm-then-live write belt (MORT_V2_PLAN I.4) ----------
 
-/** Everything a write tool needs that the model must not be able to supply. */
-export type ChatToolContext = {
-  conversationId: string | null;
-  /**
-   * The user message this turn is answering (P2). A fact taught here is
-   * attributed to the message that said it, so an answer citing the fact can
-   * link straight back to the moment — see `MessageProvenance` in the app.
-   */
-  messageId?: string | null;
-  /** From the session. The reason a fact can carry a human's name at all. */
-  user: ActingUser;
-};
-
-/** What a write tool hands back: a card to confirm, never a completed write. */
-export type PendingCard = {
-  pendingId: string;
-  tool: PendingTool;
-  preview: string;
-  payload: Record<string, unknown>;
-  status: "pending";
-  note: string;
-};
-
-const NOT_SAVED =
-  "NOT SAVED YET. This is waiting on the user's confirmation — the chat is showing them a card with Confirm / Edit / Cancel. Tell them what you're about to remember and that it needs their nod. Do not claim it is saved.";
-
-type ToolFailure = { error: string };
-
-/** Raise a card, subject to the per-user daily rail (Part IV). */
-async function raiseCard(
-  ctx: ChatToolContext,
-  tool: PendingTool,
-  payload: Record<string, unknown>,
-  preview: string,
-): Promise<PendingCard | ToolFailure> {
-  try {
-    const raisedToday = await countPendingActionsToday(ctx.user.id);
-    if (raisedToday >= env.MORT_PENDING_DAILY_LIMIT) {
-      return {
-        error: `This user has already raised ${raisedToday} confirmations today (the daily limit). Tell them you can't queue any more today and to confirm or clear the ones outstanding.`,
-      };
-    }
-    const action = await createPendingAction({
-      conversationId: ctx.conversationId,
-      messageId: ctx.messageId ?? null,
-      userId: ctx.user.id,
-      tool,
-      payload,
-      preview,
-    });
-    return { pendingId: action.id, tool, preview, payload, status: "pending", note: NOT_SAVED };
-  } catch (err) {
-    console.error(`[${tool}] could not raise a confirmation:`, err);
-    return { error: "Mort's memory is unreachable right now — say so, and don't claim anything was remembered." };
-  }
-}
-
 export function saveFactTool(ctx: ChatToolContext) {
   return tool({
     description:
@@ -455,10 +457,18 @@ export function confirmPendingTool(ctx: ChatToolContext) {
           : { error: "That confirmation was already decided." };
       }
 
+      // For a KB card the policy is re-checked at confirm time as well as at
+      // propose time: the mode may have flipped to shadow, or chat writes been
+      // frozen, between Mort offering the card and the user saying yes.
+      if (isKbWriteTool(action.tool)) {
+        const route = await resolveKbWriteRoute(ctx.user);
+        if (route.route !== "apply") return { error: route.reason };
+      }
+
       const claimed = await claimPendingAction(pendingId, "confirmed", ctx.user.id);
       if (!claimed) return { error: "That confirmation was already decided." };
       try {
-        const result = await executePendingAction(claimed, ctx.user);
+        const result = await executePendingAction(claimed, ctx.user, { onWritten: ctx.onWritten });
         return { status: "confirmed", summary: result.summary };
       } catch (err) {
         // Nothing landed, so the card goes back on the table rather than
@@ -477,10 +487,18 @@ export function confirmPendingTool(ctx: ChatToolContext) {
  * conversation. The binding is why the model can't write as someone else —
  * the acting user is closed over here, not passed in an argument.
  */
-export function buildAgentTools(ctx: ChatToolContext): ToolSet {
-  const tools: ToolSet = { ...agentTools };
+export async function buildAgentTools(ctx: ChatToolContext): Promise<ToolSet> {
+  // The read tools are rebuilt per turn so kb_search and kb_get_doc can record
+  // what Mort actually saw into ctx.seen. That set must not outlive the turn: a
+  // page found in yesterday's conversation is not a page this turn may edit.
+  const tools: ToolSet = {
+    ...agentTools,
+    kb_search: buildKbSearchTool(ctx.seen),
+    kb_get_doc: buildKbGetDocTool(ctx.seen),
+  };
   if (!isToolAllowed("save_fact", "chat")) return tools;
-  return {
+
+  const withMemory: ToolSet = {
     ...tools,
     save_fact: saveFactTool(ctx),
     retire_fact: retireFactTool(ctx),
@@ -488,6 +506,17 @@ export function buildAgentTools(ctx: ChatToolContext): ToolSet {
     list_pending: listPendingTool(ctx),
     confirm_pending: confirmPendingTool(ctx),
   };
+
+  // The chat-writes kill switch is honoured by leaving the tools off the belt
+  // entirely, rather than by refusing later: a tool Mort doesn't have is a tool
+  // nobody can talk him into reaching for.
+  if (!isToolAllowed("propose_doc_edit", "chat") || !(await chatWritesEnabled())) return withMemory;
+  return { ...withMemory, ...buildKbTools(ctx) };
+}
+
+/** Whether this turn's belt includes the KB write tools — gates WRITE_RULES. */
+export async function chatCanWriteKb(): Promise<boolean> {
+  return isToolAllowed("propose_doc_edit", "chat") && (await chatWritesEnabled());
 }
 
 /**
@@ -495,7 +524,40 @@ export function buildAgentTools(ctx: ChatToolContext): ToolSet {
  * from the shared identity module — no network round trip, no cache, no
  * unreachable-fallback needed.
  */
-export async function buildSystemPrompt(): Promise<string> {
+/**
+ * How Mort behaves once he can change the wiki (P3). Appended only when the
+ * write:kb tools are actually on the belt — describing tools that aren't there
+ * makes a model invent them.
+ *
+ * Note what this section does NOT do: it does not decide who may write. Role,
+ * mode and the confidence gate are enforced in tools/policy.ts, because a rule
+ * that lives in a prompt is a rule an attacker can argue with.
+ */
+export const WRITE_RULES = `Changing the knowledge base:
+- You can fix the wiki from this conversation. When someone says a page is wrong
+  ("that patching page is wrong, it's actually X"), don't just agree — find the
+  page (kb_search), read it (kb_get_doc), and propose the correction with
+  propose_doc_edit. They see a before/after diff and confirm it.
+- ALWAYS kb_get_doc before proposing an edit. The edit replaces your whole
+  section of the page, so start from what is currently in it: change the part
+  that's wrong and carry the rest forward verbatim.
+- You only ever write inside your own section. The rest of the page belongs to
+  whoever wrote it and is preserved exactly — don't try to edit around that.
+- Prefer extending an existing page to creating a new one. Two pages about the
+  same rack is how a wiki becomes useless: the crew find one, act on it, and
+  it's the stale one. Only use create_doc when kb_search has actually shown you
+  there is nothing to extend.
+- When someone pastes a wall of information rather than asking a question, call
+  brain_dump on their message verbatim. It splits the dump into pages, facts and
+  events, finds the existing pages first, and returns a card for each.
+- NOTHING you propose is written until the person confirms it. Say what you're
+  proposing in a line or two and leave the card to do the rest — don't paste the
+  whole page back at them, and never say you've changed something you haven't.
+  If a tool tells you it went to the review queue, say exactly that.
+- Confidence is your own honest estimate. A low one sends the change to a human
+  for review, which is the right outcome — don't inflate it to get your way.`;
+
+export async function buildSystemPrompt(opts: { canWriteKb?: boolean } = {}): Promise<string> {
   return [
     MORT_PERSONA,
     // Who he is, then how he talks. The voice is chat-only — the ingest agent
@@ -505,6 +567,9 @@ export async function buildSystemPrompt(): Promise<string> {
     MORT_CHAT_VOICE,
     `VOICE: the character above is not a garnish — let it run. Greetings, framing, asides, and a genuine crack at being funny are all wanted. But the FACTS obey the rules below exactly: terse, cited, neutral. Never let personality add, soften or embellish a venue fact — the joke goes AROUND the answer, never through it. On safety-critical steps (mains, rigging, work at height) drop the character entirely and quote the source.`,
     SYSTEM_PROMPT,
+    // Last, so the write rules sit after the scope and safety rules they must
+    // never override (order: persona → voice → answering → capability).
+    opts.canWriteKb ? WRITE_RULES : "",
   ]
     .filter(Boolean)
     .join("\n\n");

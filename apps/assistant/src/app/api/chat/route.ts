@@ -8,6 +8,7 @@ import { collectProvenance } from "@/lib/provenance";
 import {
   buildAgentTools,
   buildSystemPrompt,
+  chatCanWriteKb,
   getChatStack,
   MAX_STEPS,
   systemPromptOptions,
@@ -15,6 +16,7 @@ import {
 } from "@mort/core/agent";
 import { actingUserFromSession } from "@/lib/acting-user";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
+import { syncDocumentById } from "@/lib/rag/sync";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
 import { randomUUID } from "node:crypto";
@@ -88,19 +90,45 @@ function collectSources(
  */
 function collectPendingCards(steps: Array<{ toolResults?: unknown[] }>): PendingCardRef[] {
   const cards = new Map<string, PendingCardRef>();
-  for (const step of steps) {
-    for (const result of step.toolResults ?? []) {
-      const output = (result as { output?: unknown }).output as
-        | { pendingId?: string; tool?: string; preview?: string; payload?: Record<string, unknown> }
-        | undefined;
-      if (!output || typeof output.pendingId !== "string" || typeof output.tool !== "string") continue;
-      cards.set(output.pendingId, {
-        id: output.pendingId,
-        tool: output.tool,
-        preview: output.preview ?? "",
-        payload: output.payload ?? {},
-      });
+
+  // A tool output is either a card itself or, for brain_dump, an envelope with
+  // arrays of them (pages / facts / events). Walking one level into arrays
+  // covers both without the collector having to know which tool it came from.
+  const harvest = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) harvest(entry);
+      return;
     }
+    if (!value || typeof value !== "object") return;
+    const card = value as {
+      pendingId?: string;
+      tool?: string;
+      preview?: string;
+      payload?: Record<string, unknown>;
+      diff?: PendingCardRef["diff"];
+      docUrl?: string;
+      warnings?: string[];
+      pages?: unknown;
+      facts?: unknown;
+      events?: unknown;
+    };
+    if (typeof card.pendingId === "string" && typeof card.tool === "string") {
+      cards.set(card.pendingId, {
+        id: card.pendingId,
+        tool: card.tool,
+        preview: card.preview ?? "",
+        payload: card.payload ?? {},
+        ...(card.diff ? { diff: card.diff } : {}),
+        ...(card.docUrl ? { docUrl: card.docUrl } : {}),
+        ...(card.warnings?.length ? { warnings: card.warnings } : {}),
+      });
+      return;
+    }
+    for (const nested of [card.pages, card.facts, card.events]) harvest(nested);
+  };
+
+  for (const step of steps) {
+    for (const result of step.toolResults ?? []) harvest((result as { output?: unknown }).output);
   }
   return [...cards.values()];
 }
@@ -164,22 +192,32 @@ export async function POST(req: Request) {
     .values({ conversationId, role: "user", content: userText })
     .returning({ id: messages.id });
 
+  // The tool belt is built per turn and closed over THIS session's user, so
+  // nothing said in the conversation can change who a write is attributed to.
+  // `seen` is this turn's set of doc ids Mort actually found — the guard that
+  // stops a write landing on a page he only guessed at. `onWritten` is the
+  // assistant's own re-index: core owns Outline and Qdrant, the assistant owns
+  // kb_documents, so the hook crosses that line explicitly.
+  const canWriteKb = await chatCanWriteKb();
+  const turnTools = await buildAgentTools({
+    conversationId,
+    // A fact taught this turn is attributed to THIS message, which is what a
+    // provenance chip links back to (P2).
+    messageId: userMessage?.id ?? null,
+    user: actingUserFromSession(session),
+    seen: new Set<string>(),
+    onWritten: (docId) => syncDocumentById(docId),
+  });
+
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(await buildSystemPrompt()),
+      ...systemPromptOptions(await buildSystemPrompt({ canWriteKb })),
       messages: modelMessages,
-      // The write tools are bound to this session user and this conversation
-      // (see buildAgentTools): the model chooses what to propose, never who
-      // it is proposed as.
-      tools: {
-        ...buildAgentTools({
-          conversationId,
-          messageId: userMessage?.id ?? null,
-          user: actingUserFromSession(session),
-        }),
-        ...stack.providerTools,
-      },
+      // The tools are bound to this session user and this conversation (see
+      // buildAgentTools): the model chooses what to propose, never who it is
+      // proposed as.
+      tools: { ...turnTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
