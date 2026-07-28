@@ -3,15 +3,16 @@ import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
-import { conversations, db, messages, type Source } from "@/lib/db";
+import { conversations, db, messages, type PendingCardRef, type Source } from "@/lib/db";
 import {
-  agentTools,
+  buildAgentTools,
   buildSystemPrompt,
   getChatStack,
   MAX_STEPS,
   systemPromptOptions,
   type KbSearchResult,
 } from "@mort/core/agent";
+import { actingUserFromSession } from "@/lib/acting-user";
 import { mergeSources, parseTrailingSources } from "@mort/core/kb/sources";
 import { getStreamContext } from "@/lib/streams";
 import { env } from "@/lib/env";
@@ -79,6 +80,30 @@ function collectSources(
   return mergeSources(citedKb.length > 0 ? citedKb : dedupedKb, dedupedWeb, fromText);
 }
 
+/**
+ * Confirmation cards raised this turn. They're persisted on the assistant
+ * message so reopening the conversation still shows what Mort offered to
+ * remember — a card that vanishes on reload is a fact quietly lost.
+ */
+function collectPendingCards(steps: Array<{ toolResults?: unknown[] }>): PendingCardRef[] {
+  const cards = new Map<string, PendingCardRef>();
+  for (const step of steps) {
+    for (const result of step.toolResults ?? []) {
+      const output = (result as { output?: unknown }).output as
+        | { pendingId?: string; tool?: string; preview?: string; payload?: Record<string, unknown> }
+        | undefined;
+      if (!output || typeof output.pendingId !== "string" || typeof output.tool !== "string") continue;
+      cards.set(output.pendingId, {
+        id: output.pendingId,
+        tool: output.tool,
+        preview: output.preview ?? "",
+        payload: output.payload ?? {},
+      });
+    }
+  }
+  return [...cards.values()];
+}
+
 export async function POST(req: Request) {
   const session = await requireSession();
   if (!session) {
@@ -142,15 +167,26 @@ export async function POST(req: Request) {
       model: stack.model,
       ...systemPromptOptions(await buildSystemPrompt()),
       messages: modelMessages,
-      tools: { ...agentTools, ...stack.providerTools },
+      // The write tools are bound to this session user and this conversation
+      // (see buildAgentTools): the model chooses what to propose, never who
+      // it is proposed as.
+      tools: {
+        ...buildAgentTools({
+          conversationId,
+          user: actingUserFromSession(session),
+        }),
+        ...stack.providerTools,
+      },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
+        const pendingCards = collectPendingCards(steps);
         await db.insert(messages).values({
           conversationId,
           role: "assistant",
           content: text,
           sources,
+          pendingActions: pendingCards.length > 0 ? pendingCards : null,
         });
         await db
           .update(conversations)

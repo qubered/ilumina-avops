@@ -16,6 +16,18 @@ export * from "./auth-schema";
 
 export type Source = { title: string; url: string; kind?: "kb" | "web" };
 
+/**
+ * A confirmation card Mort raised during a turn (v2 P1). Stored on the message
+ * so the card survives a reload — the live status comes from
+ * `mort_pending_actions`, which core owns; this is only what was shown.
+ */
+export type PendingCardRef = {
+  id: string;
+  tool: string;
+  preview: string;
+  payload: Record<string, unknown>;
+};
+
 export const conversations = pgTable(
   "conversations",
   {
@@ -49,6 +61,7 @@ export const messages = pgTable(
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
     sources: jsonb("sources").$type<Source[]>(),
+    pendingActions: jsonb("pending_actions").$type<PendingCardRef[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

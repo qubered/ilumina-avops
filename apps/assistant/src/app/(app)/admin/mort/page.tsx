@@ -3,16 +3,19 @@ import {
   getMortConfig,
   getMortHealth,
   listCurrentFacts,
+  listMortPendingActions,
   listPendingReviews,
   type MortActivity,
   type MortConfig,
   type MortFact,
   type MortHealth,
+  type MortPendingAction,
   type MortReviewItem,
 } from "@/lib/mort-admin";
 import { MortReviewList } from "@/components/mort-review-list";
 import { MortModeSwitcher } from "@/components/mort-mode-switcher";
 import { MortFacts } from "@/components/mort-facts";
+import { MortPendingActions } from "@/components/mort-pending-actions";
 import { MortHealthPanel } from "@/components/mort-health";
 import { MortActivityPanel } from "@/components/mort-activity";
 import { env } from "@/lib/env";
@@ -25,14 +28,16 @@ export default async function AdminMortPage() {
   let facts: MortFact[] = [];
   let health: MortHealth | null = null;
   let activity: MortActivity | null = null;
+  let taught: MortPendingAction[] = [];
   let error: string | null = null;
   try {
-    [config, items, facts, health, activity] = await Promise.all([
+    [config, items, facts, health, activity, taught] = await Promise.all([
       getMortConfig(),
       listPendingReviews(),
       listCurrentFacts(),
       getMortHealth(),
       getMortActivity(),
+      listMortPendingActions(),
     ]);
   } catch (e) {
     error = e instanceof Error ? e.message : "unreachable";
@@ -60,6 +65,7 @@ export default async function AdminMortPage() {
       {health && <MortHealthPanel health={health} />}
       {activity && <MortActivityPanel activity={activity} outlineUrl={env.OUTLINE_URL} />}
       {!error && <MortFacts facts={facts} />}
+      {!error && <MortPendingActions actions={taught} />}
     </div>
   );
 }

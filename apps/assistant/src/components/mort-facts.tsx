@@ -57,6 +57,16 @@ export function MortFacts({ facts }: { facts: MortFact[] }) {
               <span className="font-medium text-text">{f.factKey}</span>
               <span className="text-accent">= {f.value}</span>
               {f.scope && <span className="text-xs text-text-3">({f.scope})</span>}
+              {/* Where it came from: a fact taught in conversation carries the
+                  teller's name exactly as an admin-declared one does. */}
+              {f.sourceTier === "chat" && (
+                <span className="rounded border border-divider px-1.5 py-0.5 text-[11px] text-text-3">in chat</span>
+              )}
+              {f.supersedes != null && (
+                <span className="text-[11px] text-text-3" title={`Replaced fact #${f.supersedes}`}>
+                  updated
+                </span>
+              )}
               <span className="ml-auto text-[11px] text-text-3">
                 {f.effectiveFrom ?? "—"} · {f.approvedBy}
               </span>
