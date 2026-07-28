@@ -14,6 +14,7 @@
     "./memory/schema": "./src/memory/schema.ts",
     "./memory/config": "./src/memory/config.ts",
     "./memory/lock": "./src/memory/lock.ts",
+    "./memory/pending": "./src/memory/pending.ts",
     "./memory/jobs": "./src/memory/jobs.ts",
     "./memory/retry": "./src/memory/retry.ts",
     "./kb/chunker": "./src/kb/chunker.ts",
@@ -21,6 +22,7 @@
     "./kb/metadata": "./src/kb/metadata.ts",
     "./kb/store": "./src/kb/store.ts",
     "./kb/events-store": "./src/kb/events-store.ts",
+    "./kb/events-index": "./src/kb/events-index.ts",
     "./kb/attachments": "./src/kb/attachments.ts",
     "./kb/sources": "./src/kb/sources.ts",
     "./kb/region": "./src/kb/region.ts",
@@ -32,7 +34,9 @@
     "./kb/sync-lock": "./src/kb/sync-lock.ts",
     "./kb/write-deps": "./src/kb/write-deps.ts",
     "./kb/execute": "./src/kb/execute.ts",
-    "./agent": "./src/agent/index.ts"
+    "./agent": "./src/agent/index.ts",
+    "./agent/pending-actions": "./src/agent/pending-actions.ts",
+    "./tools/policy": "./src/tools/policy.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

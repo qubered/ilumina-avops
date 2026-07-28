@@ -67,6 +67,11 @@ const schema = z.object({
   MORT_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.6),
   MORT_DAILY_TOKEN_CAP: z.coerce.number().min(0).default(0),
 
+  // Confirm-then-live rails (v2 P1). A card nobody answers expires; a runaway
+  // conversation can't flood the queue past the per-user daily cap.
+  MORT_PENDING_TTL_HOURS: z.coerce.number().min(1).default(24),
+  MORT_PENDING_DAILY_LIMIT: z.coerce.number().min(1).default(30),
+
   // Fallback collection name if the AI can't pick a fitting section.
   INGEST_DEFAULT_COLLECTION: z.string().default("Imported"),
 });

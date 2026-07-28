@@ -6,15 +6,16 @@ import { getEffectiveMode, getEffectiveThreshold, setMode as coreSetMode } from 
 import {
   appendJournal,
   getReviewItem,
-  insertFact,
   listCurrentFacts as coreListCurrentFacts,
   listLibrary,
   listPendingReviews as coreListPendingReviews,
   recentActivity,
   resolveReview,
   retireFact as coreRetireFact,
+  saveFactSuperseding,
 } from "@mort/core/memory";
 import { listActiveJobs, listDeadJobs, queueStats, reviveJob as coreReviveJob, tokensToday } from "@mort/core/memory/jobs";
+import { listRecentPendingActions, type PendingAction } from "@mort/core/memory/pending";
 
 /**
  * Direct-call replacement for the old mort-review.ts HTTP client — this is
@@ -198,7 +199,25 @@ export type MortFact = {
   approvedBy: string;
   confidence: string | null;
   note: string | null;
+  supersedes: number | null;
 };
+
+export type MortPendingAction = PendingAction;
+
+/**
+ * The confirm-then-live queue, decided or not. Read-only here on purpose:
+ * a card is answered by the person Mort raised it with, in their conversation,
+ * because that is who the write gets attributed to (V2-1). An admin watching
+ * the queue is oversight, not a second approval path.
+ */
+export async function listMortPendingActions(): Promise<MortPendingAction[]> {
+  try {
+    return await listRecentPendingActions(50);
+  } catch (err) {
+    console.error("[mort-admin] listMortPendingActions failed:", err);
+    return [];
+  }
+}
 
 /** Human-approved current-state facts in force today. Empty on failure. */
 export async function listCurrentFacts(query?: string): Promise<MortFact[]> {
@@ -210,14 +229,19 @@ export async function listCurrentFacts(query?: string): Promise<MortFact[]> {
   }
 }
 
+/**
+ * Declare a fact from the admin panel. Goes through the same superseding path
+ * as a fact taught in chat, so a key can only ever have one current answer
+ * however it was declared.
+ */
 export async function createFact(
-  fact: Omit<MortFact, "id" | "effectiveTo"> & { effectiveTo?: string | null },
+  fact: Omit<MortFact, "id" | "effectiveTo" | "supersedes">,
 ): Promise<{ ok: boolean; status: number; json: unknown }> {
   try {
-    const id = await insertFact(fact);
+    const { id, superseded } = await saveFactSuperseding(fact);
     await appendJournal({
       action: "fact_approved",
-      rationale: `${fact.factKey} = ${fact.value} (by ${fact.approvedBy})`,
+      rationale: `${fact.factKey} = ${fact.value} (by ${fact.approvedBy}${superseded ? `, supersedes #${superseded.id}` : ""})`,
     });
     return { ok: true, status: 201, json: { id } };
   } catch (err) {

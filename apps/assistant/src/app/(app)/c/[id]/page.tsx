@@ -2,7 +2,8 @@ import { notFound, redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages } from "@/lib/db";
-import { Chat, type DbMessage } from "@/components/chat";
+import { withPendingStatus } from "@/lib/conversation-messages";
+import { Chat } from "@/components/chat";
 
 export default async function ConversationPage({
   params,
@@ -26,12 +27,7 @@ export default async function ConversationPage({
     .where(eq(messages.conversationId, conversation.id))
     .orderBy(asc(messages.createdAt));
 
-  const dbMessages: DbMessage[] = rows.map((m) => ({
-    id: m.id,
-    role: m.role,
-    content: m.content,
-    sources: m.sources,
-  }));
+  const dbMessages = await withPendingStatus(rows);
 
   return (
     <Chat

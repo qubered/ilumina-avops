@@ -4,8 +4,10 @@ import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Source } from "@/lib/db/schema";
+import type { ChatCard } from "@/lib/conversation-messages";
 import { stripTrailingSourcesList } from "@mort/core/kb/sources";
 import { FeedbackButtons } from "./feedback-buttons";
+import { PendingActionCard } from "./pending-action-card";
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -35,6 +37,32 @@ function sourcesOf(message: UIMessage): Source[] {
     }
   }
   return [...new Map(collected.map((s) => [s.url, s])).values()];
+}
+
+/**
+ * Confirmation cards: the persisted ones (with their live status) for DB
+ * messages, the freshly-raised ones from tool output while streaming.
+ */
+function cardsOf(message: UIMessage): ChatCard[] {
+  const meta = message.metadata as { pendingActions?: ChatCard[] } | undefined;
+  if (meta?.pendingActions?.length) return meta.pendingActions;
+
+  const live = new Map<string, ChatCard>();
+  for (const part of message.parts) {
+    if (!part.type.startsWith("tool-") || !("output" in part)) continue;
+    const output = part.output as
+      | { pendingId?: string; tool?: string; preview?: string; payload?: Record<string, unknown> }
+      | undefined;
+    if (!output?.pendingId || !output.tool) continue;
+    live.set(output.pendingId, {
+      id: output.pendingId,
+      tool: output.tool,
+      preview: output.preview ?? "",
+      payload: output.payload ?? {},
+      status: "pending",
+    });
+  }
+  return [...live.values()];
 }
 
 function isSearching(message: UIMessage): boolean {
@@ -102,6 +130,7 @@ export function MessageItem({
   }
 
   const sources = sourcesOf(message);
+  const cards = cardsOf(message);
   const searching = isSearching(message);
   const body = sources.length > 0 ? stripTrailingSourcesList(text) : text;
 
@@ -133,6 +162,9 @@ export function MessageItem({
           </ReactMarkdown>
         </div>
       )}
+      {cards.map((card) => (
+        <PendingActionCard key={card.id} card={card} compact={compact} />
+      ))}
       {sources.length > 0 && (
         <div className="mt-3">
           <p className="mb-0.5 px-2 text-[13px] font-medium text-text-3">Sources</p>
