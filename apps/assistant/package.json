@@ -15,12 +15,12 @@
     "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.8",
-    "@ai-sdk/openai": "^4.0.8",
+    "@ai-sdk/anthropic": "^4.0.14",
+    "@ai-sdk/openai": "^4.0.13",
     "@ai-sdk/react": "^4.0.16",
     "@mort/core": "workspace:*",
     "@qdrant/js-client-rest": "^1.18.0",
-    "ai": "^7.0.15",
+    "ai": "^7.0.26",
     "better-auth": "^1.6.23",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.10",
@@ -36,7 +36,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
