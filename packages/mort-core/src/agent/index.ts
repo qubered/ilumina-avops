@@ -17,6 +17,7 @@ export {
   agentTools,
   buildKbGetDocTool,
   buildKbSearchTool,
+  changeDigestTool,
   currentStateTool,
   eventLogTool,
   kbSearchTool,
@@ -24,12 +25,15 @@ export {
   mortMemoryTool,
 } from "./read-tools";
 export { confirmPendingTool, listPendingTool, logEventTool, retireFactTool, saveFactTool } from "./memory-tools";
+export { ADMIN_RULES, decideReviewTool, mortStatusTool, reviewQueueTool, setModeTool } from "./admin-tools";
 export {
   buildSystemPrompt,
   chatCanWriteKb,
+  chatHasAdminTools,
   chatHasMcpTools,
   MAX_STEPS,
   SYSTEM_PROMPT,
+  WIDGET_RULES,
   WRITE_RULES,
 } from "./prompt";
 export { prepareTurn, runTurn, runDreamTurn, runIngestTurn, runReflectionTurn } from "./run-turn";

@@ -1,7 +1,6 @@
 import { env as coreEnv } from "@mort/core/env";
-import { getSelfUserId } from "@mort/core/kb/outline";
-import { buildWriteDeps } from "@mort/core/kb/write-deps";
-import { executeReview } from "@mort/core/kb/execute";
+import { decideReviewItem } from "@mort/core/kb/review";
+import { changeDigest, type ChangeDigest } from "@mort/core/memory/digest";
 import {
   getEffectiveMode,
   getEffectiveThreshold,
@@ -24,12 +23,10 @@ import { CHANNELS, type Channel } from "@mort/core/tools/types";
 import {
   appendJournal,
   factHistory as coreFactHistory,
-  getReviewItem,
   listCurrentFacts as coreListCurrentFacts,
   listLibrary,
   listPendingReviews as coreListPendingReviews,
   recentActivity,
-  resolveReview,
   retireFact as coreRetireFact,
   saveFactSuperseding,
   setSetting,
@@ -66,53 +63,24 @@ export async function listPendingReviews(): Promise<MortReviewItem[]> {
   return coreListPendingReviews(200);
 }
 
+/**
+ * The console's door onto a review decision. The decision itself lives in
+ * `@mort/core/kb/review` (P8) because there are now two doors onto it — this
+ * one and an admin triaging the queue from a conversation — and two copies of
+ * a decision is how two slightly different decisions start. All this does is
+ * map the outcome onto HTTP.
+ */
 export async function decideReview(
   id: number,
   decision: "approve" | "reject",
   decidedBy?: string,
 ): Promise<{ ok: boolean; status: number; json: unknown }> {
-  const item = await getReviewItem(id);
-  if (!item) return { ok: false, status: 404, json: { error: "Not found" } };
-  if (item.status !== "pending") {
-    return { ok: false, status: 409, json: { error: `already ${item.status}` } };
-  }
-
-  if (decision === "reject") {
-    await resolveReview(id, "rejected", decidedBy);
-    // The bytes stay: rejecting "attach this to THAT page" says nothing about
-    // whether the file belongs somewhere else, and Mort re-checks his library
-    // whenever a new page appears. They're reclaimed when the source is deleted.
-    return { ok: true, status: 200, json: { id, status: "rejected" } };
-  }
-
-  // Approve → execute the proposed action, then mark approved. If the executor
-  // can't handle it yet (ATTACH/tombstone), leave the item pending and 422.
-  try {
-    const selfUserId = await getSelfUserId().catch(() => null);
-    // The write is Mort's, but the decision to make it is this admin's — the
-    // journal records the person, from the session, not from anything typed.
-    const result = await executeReview(
-      item,
-      buildWriteDeps(selfUserId, { channel: "admin", actor: decidedBy ?? null }),
-    );
-    await resolveReview(id, "approved", decidedBy);
-    await appendJournal({
-      sourceId: item.source_id,
-      outlineDocumentId: result.docId,
-      action: `approved:${item.action}`,
-      rationale: `review ${id}`,
-      channel: "admin",
-      actor: decidedBy ?? null,
-    });
-    return { ok: true, status: 200, json: { id, status: "approved", ...result } };
-  } catch (err) {
-    console.error(`[mort-admin] execute ${id} failed:`, err);
-    return {
-      ok: false,
-      status: 422,
-      json: { id, status: "pending", error: err instanceof Error ? err.message : "execute failed" },
-    };
-  }
+  const result = await decideReviewItem(id, decision, { channel: "admin", decidedBy });
+  if (result.ok) return { ok: true, status: 200, json: result };
+  // An executor that couldn't carry the action out leaves the item pending, so
+  // 422 (not 500): the request was fine, the proposal isn't executable.
+  const status = result.reason === "not_found" ? 404 : result.reason === "already_decided" ? 409 : 422;
+  return { ok: false, status, json: { id, error: result.message } };
 }
 
 export type MortMode = "off" | "shadow" | "live";
@@ -278,6 +246,8 @@ export type MortActiveJob = {
 
 export type MortToolCall = ToolCallRow;
 
+export type MortDigest = ChangeDigest;
+
 export type MortActivity = {
   journal: MortActivityRow[];
   library: MortLibraryRow[];
@@ -288,18 +258,34 @@ export type MortActivity = {
    * this one says what he reached for — including anything a channel refused.
    */
   toolCalls: MortToolCall[];
+  /**
+   * The same digest the chat's `change_digest` tool reads (P8). Rendered here
+   * so "what's changed this week?" gives the same answer whether it was asked
+   * in a conversation or read off this page — one function, two readers, and
+   * therefore nothing to disagree about.
+   */
+  digest: MortDigest | null;
 };
+
+/** The window the admin panel summarises, and the tool's own default. */
+export const DIGEST_DAYS = 7;
 
 /** What Mort has been doing, what's in flight, and everything he holds. Null on failure. */
 export async function getMortActivity(query?: string): Promise<MortActivity | null> {
   try {
-    const [journal, library, queue, toolCalls] = await Promise.all([
+    const [journal, library, queue, toolCalls, digest] = await Promise.all([
       recentActivity(50),
       listLibrary(query),
       listActiveJobs(),
       listToolCalls({ limit: 60 }),
+      // Best-effort: a digest that won't build is not a reason to lose the
+      // queue, the journal and the library, which are what an admin came for.
+      changeDigest({ days: DIGEST_DAYS }).catch((err) => {
+        console.error("[mort-admin] changeDigest failed:", err);
+        return null;
+      }),
     ]);
-    return { journal, library, queue, toolCalls };
+    return { journal, library, queue, toolCalls, digest };
   } catch (err) {
     console.error("[mort-admin] getMortActivity failed:", err);
     return null;

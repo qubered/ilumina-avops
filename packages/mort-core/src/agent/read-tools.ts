@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { eventProvenance, factHistory, listCurrentFacts, searchMemory, type MortFact } from "../memory";
+import { changeDigest } from "../memory/digest";
 import { listLessons } from "../memory/lessons";
 import { describeProvenance, eventChipFrom, factChip, type ProvenanceChip } from "../memory/provenance";
 import { embedQuery } from "../kb/embeddings";
@@ -235,6 +236,49 @@ export const currentStateTool = tool({
       })),
     );
     return { facts: current, history: chains.filter((c) => c.previously.length > 0) };
+  },
+});
+
+/**
+ * "What's changed this week?" (MORT_V2_PLAN Part II).
+ *
+ * Reads the same `changeDigest` the admin console's activity panel renders, so
+ * the answer in chat and the answer on the page cannot disagree for the same
+ * window. Everyone gets this one: knowing what moved in the KB is not operator
+ * business, it's the thing a crew member most wants after a week off.
+ */
+export const changeDigestTool = tool({
+  description:
+    "Summarise what has changed lately: pages written or corrected, current-state facts learnt or replaced, events " +
+    "logged, review proposals decided, and what's still waiting on somebody. Use for 'what's changed this week', " +
+    "'what have you been up to', 'anything new since Friday'. Returns a dated summary — read it back as prose with " +
+    "the dates and the people, not as a table dump.",
+  inputSchema: z.object({
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(90)
+      .optional()
+      .describe("How far back to look, in days. Defaults to 7 — use 1 for 'today', 30 for 'this month'."),
+  }),
+  execute: async ({ days }): Promise<Record<string, unknown>> => {
+    try {
+      const digest = await changeDigest({ days });
+      const { totals, outstanding } = digest;
+      const quiet =
+        totals.pages + totals.facts + totals.events + totals.reviews + totals.lessons === 0;
+      return {
+        ...digest,
+        note: quiet
+          ? `Nothing changed in the last ${digest.window.days} day(s). Say so plainly — a quiet week is an answer.`
+          : `Covers ${digest.window.since.slice(0, 10)} to ${digest.window.until.slice(0, 10)}.` +
+            (outstanding.reviews > 0 ? ` ${outstanding.reviews} proposal(s) still waiting on an admin.` : ""),
+      };
+    } catch (err) {
+      console.error("[change_digest] failed:", err);
+      return { error: "Couldn't read the change log just now — say so rather than reconstructing it from memory." };
+    }
   },
 });
 

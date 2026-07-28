@@ -8,6 +8,7 @@ import type {
   MortLibraryRow,
   MortToolCall,
 } from "@/lib/mort-admin";
+import { MortDigestPanel } from "./mort-digest";
 
 /**
  * What Mort is doing, what he's working through, and everything he holds.
@@ -23,7 +24,26 @@ function describe(row: MortActivityRow): { verb: string; tone: string } {
   const { action } = row;
   if (action.startsWith("proposed:")) return { verb: `Proposed ${prettyAction(action.slice(9))}`, tone: "text-accent" };
   if (action.startsWith("approved:")) return { verb: `Approved ${prettyAction(action.slice(9))}`, tone: "text-success" };
+  // Rejections are journaled from P8 on, and are the entry an auditor most
+  // wants: "nothing happened" is otherwise invisible.
+  if (action.startsWith("rejected:")) return { verb: `Rejected ${prettyAction(action.slice(9))}`, tone: "text-text-3" };
+  // A mode change is the loudest thing anyone can do to Mort — going live
+  // reads as a warning, because it is one.
+  if (action.startsWith("mode:")) {
+    const mode = action.slice(5);
+    return { verb: `Switched to ${mode} mode`, tone: mode === "live" ? "text-danger" : "text-accent" };
+  }
   switch (action) {
+    case "doc_created":
+      return { verb: "Wrote, from chat", tone: "text-success" };
+    case "doc_updated":
+      return { verb: "Corrected, from chat", tone: "text-success" };
+    case "doc_attached":
+      return { verb: "Attached, from chat", tone: "text-success" };
+    case "fact_saved":
+      return { verb: "Was told a fact", tone: "text-success" };
+    case "event_logged":
+      return { verb: "Was told what happened", tone: "text-success" };
     case "create":
       return { verb: "Wrote", tone: "text-success" };
     case "update":
@@ -71,10 +91,13 @@ function ago(iso: string): string {
 }
 
 export function MortActivityPanel({ activity, outlineUrl }: { activity: MortActivity; outlineUrl: string }) {
-  const { journal, library, queue, toolCalls } = activity;
+  const { journal, library, queue, toolCalls, digest } = activity;
   return (
     <>
       {queue.length > 0 && <InFlight queue={queue} />}
+      {/* The summary first, the raw journal below it: an admin opening this page
+          wants "what happened" before "every row it happened in" (P8). */}
+      {digest && <MortDigestPanel digest={digest} outlineUrl={outlineUrl} />}
       <Activity journal={journal} outlineUrl={outlineUrl} />
       <ToolLog calls={toolCalls} />
       <Library library={library} />

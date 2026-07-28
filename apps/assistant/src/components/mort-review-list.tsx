@@ -2,7 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DREAM_LABEL,
+  isDreamProposal,
+  reviewActionable as actionable,
+  whyNotActionable,
+} from "@mort/core/kb/review-shape";
 import type { MortReviewItem } from "@/lib/mort-admin";
+
+/**
+ * "Can this be approved, and if not why" now comes from core (v2 P8), because
+ * an admin can also triage this queue from a conversation — and two copies of
+ * that judgement is how the console and the chat start describing the same
+ * proposal differently.
+ */
 
 const ACTION_COLOR: Record<string, string> = {
   CREATE: "text-success",
@@ -12,8 +25,6 @@ const ACTION_COLOR: Record<string, string> = {
   tombstone: "text-danger",
 };
 
-const EXECUTABLE = new Set(["CREATE", "UPDATE_ADDITIVE", "ATTACH", "tombstone"]);
-const NEEDS_TARGET = new Set(["UPDATE_ADDITIVE", "ATTACH"]);
 const APPROVE_LABEL: Record<string, string> = {
   CREATE: "Approve & write",
   UPDATE_ADDITIVE: "Approve & write",
@@ -21,39 +32,7 @@ const APPROVE_LABEL: Record<string, string> = {
   tombstone: "Approve removal",
 };
 
-/** Dream proposals (R7) are observations about the corpus, not queued edits. */
-const isDream = (action: string) => action.startsWith("DREAM:");
-
-const DREAM_LABEL: Record<string, string> = {
-  "DREAM:MISSING_PAGE": "Nothing covers this",
-  "DREAM:CONTRADICTION": "These disagree",
-  "DREAM:MERGE": "Same page twice",
-  "DREAM:SPLIT": "Two topics, one page",
-};
-
-/**
- * Only offer Approve for something that can actually run. An ATTACH/UPDATE whose
- * target was stripped (Mort guessed a doc id) has nowhere to go — offering the
- * button just hands you a 422.
- */
-function actionable(item: MortReviewItem): boolean {
-  if (!EXECUTABLE.has(item.action)) return false;
-  if (NEEDS_TARGET.has(item.action) && !item.target_doc_id) return false;
-  return true;
-}
-
-function whyNotActionable(item: MortReviewItem): string {
-  if (NEEDS_TARGET.has(item.action) && !item.target_doc_id) {
-    return "no valid target doc — Mort guessed one, so there's nothing to attach to. Dismiss it.";
-  }
-  if (isDream(item.action)) {
-    // Deliberately has no Approve. There's no edit queued behind it: a dream is
-    // Mort telling you something about the KB's shape, and what to do about it
-    // is a judgement call he shouldn't be making for you.
-    return "something Mort noticed across the whole KB — no edit queued. Act on it, or dismiss.";
-  }
-  return "flagged for a human — no auto-action";
-}
+const isDream = isDreamProposal;
 
 export function MortReviewList({ items }: { items: MortReviewItem[] }) {
   const router = useRouter();

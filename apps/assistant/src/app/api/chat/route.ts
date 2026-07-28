@@ -18,6 +18,14 @@ export const maxDuration = 120;
 
 const bodySchema = z.object({
   conversationId: z.string().uuid(),
+  /**
+   * Which chat surface this came from (P8). The widget's belt is narrower —
+   * read and teach, no wiki writes — so this decides what Mort can reach this
+   * turn. It's a claim the client makes, which is why it can only ever NARROW:
+   * the worst a forged "widget" does is take tools away, and a forged "app"
+   * still faces the channel/role policy that was already there.
+   */
+  surface: z.enum(["app", "widget"]).default("app"),
   message: z.object({
     role: z.literal("user"),
     parts: z.array(z.looseObject({ type: z.string(), text: z.string().optional() })),
@@ -147,7 +155,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  const { conversationId, message } = parsed.data;
+  const { conversationId, message, surface } = parsed.data;
   const userText = extractText(message.parts);
   if (!userText) {
     return NextResponse.json({ error: "Empty message" }, { status: 400 });
@@ -202,6 +210,10 @@ export async function POST(req: Request) {
     { kind: "chat", messages: modelMessages },
     {
       channel: "chat",
+      // The panel beside the wiki gets a narrower belt than the full app: a
+      // page diff has nowhere to render in a few hundred pixels, and
+      // confirming a change nobody can see is not a confirmation (P8).
+      surface,
       actor: actingUserFromSession(session),
       conversationId,
       // A fact taught this turn is attributed to THIS message, which is what a

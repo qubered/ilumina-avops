@@ -18,9 +18,14 @@ vi.mock("../memory/config", () => ({
   getEffectiveThreshold: async () => state.threshold,
 }));
 
-const { allowedTiers, isTierAllowed, resolveKbWriteRoute, resolveMcpCall, tierNeedsConfirmation } = await import(
-  "./policy"
-);
+const {
+  allowedTiers,
+  isTierAllowed,
+  isTierOnSurface,
+  resolveKbWriteRoute,
+  resolveMcpCall,
+  tierNeedsConfirmation,
+} = await import("./policy");
 
 const admin = { channel: "chat" as const, role: "admin" as const };
 const member = { channel: "chat" as const, role: "member" as const };
@@ -94,6 +99,37 @@ describe("channel/role tier policy", () => {
     for (const tier of ["read", "write:memory", "write:kb", "admin"] as const) {
       expect(tierNeedsConfirmation(tier)).toBe(false);
     }
+  });
+});
+
+describe("surface policy (P8)", () => {
+  it("gives the compact widget reading and teaching, and nothing beyond", () => {
+    expect(isTierOnSurface("read", "widget")).toBe(true);
+    expect(isTierOnSurface("write:memory", "widget")).toBe(true);
+    for (const tier of ["write:kb", "write:world", "admin"] as const) {
+      expect(isTierOnSurface(tier, "widget")).toBe(false);
+    }
+  });
+
+  it("takes nothing away from the full app", () => {
+    for (const tier of ["read", "write:memory", "write:kb", "write:world", "admin"] as const) {
+      expect(isTierOnSurface(tier, "app")).toBe(true);
+    }
+  });
+
+  it("treats an unstated surface as the full app", () => {
+    // Every caller before P8 — and both machine channels, which have no
+    // surface at all — must keep the belt they had.
+    for (const tier of ["read", "write:kb", "admin"] as const) {
+      expect(isTierOnSurface(tier)).toBe(true);
+    }
+  });
+
+  it("can only narrow: no surface grants a tier its channel withholds", () => {
+    // The combination is what governs, and it's an AND. A widget cannot buy
+    // back write:kb, and the full app cannot hand a member the operator tier.
+    expect(isTierOnSurface("write:kb", "widget") && isTierAllowed("write:kb", "chat", "admin")).toBe(false);
+    expect(isTierOnSurface("admin", "app") && isTierAllowed("admin", "chat", "member")).toBe(false);
   });
 });
 

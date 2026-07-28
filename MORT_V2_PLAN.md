@@ -138,11 +138,11 @@ every invocation (name, args hash, actor, channel, conversation, outcome, latenc
 
 | Tier | Meaning | Tools |
 |---|---|---|
-| `read` | No side effects | `kb_search`, `kb_get_doc`, `event_log`, `mort_memory`, `current_state`, `list_pending`, `confirm_pending`, `note_understanding`, `hold_file`, `skip_file`, `finish_dream`, `web_search` (provider) |
+| `read` | No side effects | `kb_search`, `kb_get_doc`, `event_log`, `mort_memory`, `current_state`, `change_digest`, `list_pending`, `confirm_pending`, `note_understanding`, `hold_file`, `skip_file`, `finish_dream`, `web_search` (provider) |
 | `write:memory` | Mort's own state — cheap to reverse | `save_fact`, `retire_fact`, `log_event`, `note_lesson` |
 | `write:kb` | Outline pages — mort-region safe writes, and the review queue that stands in for them | chat: `propose_doc_edit`, `apply_doc_edit`, `create_doc`, `attach_source`, `brain_dump` · ingest: `create_page`, `update_page`, `attach_to_page`, `send_to_review` · dream: `raise_proposal` |
 | `write:world` | Anything beyond Mort's systems | all MCP-provided tools (default; per-tool override possible) |
-| `admin` | Operator actions | `decide_review`, `set_mode`, `mcp_toggle` |
+| `admin` | Operator actions | `review_queue`, `mort_status`, `decide_review`, `set_mode`, `mcp_servers`, `mcp_toggle` |
 
 Tier policy by channel and role:
 
@@ -159,6 +159,13 @@ Tier policy by channel and role:
 - **dream**: `read` + `note_lesson` (P7) + `raise_proposal`. It holds `write:kb` for the
   review queue alone — every executing tool is off the channel, so "a dream proposes and
   a human decides" is a property of the belt rather than a convention.
+
+A chat turn carries one more axis, the **surface** (P8): `app` or `widget`. It can only
+ever narrow — the widget keeps `read` and `write:memory` and loses `write:kb`,
+`write:world` and `admin`, because a page diff has nowhere to render in a few hundred
+pixels and confirming a change nobody can see is not a confirmation. The surface is set
+by the route from how the request arrived, never from the message, and is re-checked
+wherever the channel rule is.
 
 ### I.4 Confirm-then-live mechanics (V2-1)
 
@@ -349,6 +356,32 @@ power-user fallback, but everything routine happens in conversation.
 
 History context stays at 20 messages for now; durable context lives in facts, which is
 the point — "remember X until told otherwise" is a fact, not a longer chat buffer.
+
+**P8 landed** (`agent/admin-tools.ts`, `memory/digest.ts`, `kb/review.ts` +
+`kb/review-shape.ts`, and a `Surface` in `tools/types.ts`):
+
+- *Admin in chat.* `review_queue` and `mort_status` read; `decide_review` and `set_mode`
+  park a confirmation card like every other write tool, so an admin saying "reject that
+  one" gets a card naming the proposal rather than a rejection. The decision itself moved
+  into `kb/review.decideReviewItem` because there are now two doors onto it — two copies
+  of a decision is how two slightly different decisions start — and the "can this be
+  approved?" predicates moved into a leaf module the admin list can import without
+  dragging Postgres in behind them.
+- *Digest.* `memory/digest.changeDigest` over the journal, facts, events and decided
+  proposals, and the lessons P7's reflection drew — retired ones flagged rather than
+  filtered, since a lesson dropped this week is exactly what the question is about. The
+  `change_digest` tool and the console's activity panel call the same function for the
+  same window, which is the acceptance case made structural: there is only one thing for
+  them to disagree from. The window is half-open, so adjacent digests never double-count.
+- *Widget parity.* A chat turn now carries a `Surface`, and the surface can only ever
+  take tiers away: the panel keeps `read` and `write:memory` and loses the rest. The
+  narrowing is enforced in the same three places the channel rule is — belt assembly, the
+  harness's call-time re-check, and `confirm_pending`, which is `read` by necessity and
+  would otherwise be a one-word way around it.
+
+The rule underneath all three: a tool Mort doesn't have is a tool nobody can talk him
+into reaching for, and every widening — a new door onto the review queue, a new tier on a
+belt — is spent making that sentence keep being true.
 
 ---
 

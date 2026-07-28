@@ -9,11 +9,77 @@ import { ACTION_DECIDED_EVENT } from "./pending-action-card";
 
 export type DbMessage = ChatMessage;
 
-export const STARTER_QUESTIONS = [
-  "How do I patch a camera into the E2?",
-  "How do I get public internet in the PFA?",
-  "How do I get the audio show file running?",
-];
+/** Where this chat is rendered — the widget's belt is narrower (v2 P8). */
+export type ChatSurface = "app" | "widget";
+
+/**
+ * The empty state teaches the surface (MORT_V2_PLAN Part II).
+ *
+ * v1's three starters were all lookups, which taught the crew that Mort is a
+ * search box. He now remembers what he's told and can say what's changed, and
+ * nobody discovers either from a blank composer — so one of each is offered
+ * from the start.
+ *
+ * The widget list is shorter and drops the wiki-shaped one: those tools aren't
+ * on its belt, and a starter that leads somewhere Mort has to decline is worse
+ * than no starter.
+ */
+export type Starter = { text: string; kind: "ask" | "teach" | "digest" };
+
+export const STARTER_QUESTIONS: Record<ChatSurface, Starter[]> = {
+  app: [
+    { text: "How do I patch a camera into the E2?", kind: "ask" },
+    { text: "How do I get the audio show file running?", kind: "ask" },
+    { text: "Remember this: the LED wall is at 6m on the Main Stage", kind: "teach" },
+    { text: "What's changed this week?", kind: "digest" },
+  ],
+  widget: [
+    { text: "How do I patch a camera into the E2?", kind: "ask" },
+    { text: "Remember this: we're on the spare DSP this week", kind: "teach" },
+    { text: "What's changed this week?", kind: "digest" },
+  ],
+};
+
+/**
+ * One glyph per kind, so the row says what it is before it's read: the search
+ * glyph is Outline's own (the empty state reads like a wiki search page), the
+ * brain matches the confirmation card a teaching starter leads to, and the
+ * clock is the digest.
+ */
+function StarterIcon({ kind }: { kind: Starter["kind"] }) {
+  const common = {
+    width: 15,
+    height: 15,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "shrink-0 text-text-3",
+  };
+  if (kind === "teach") {
+    return (
+      <svg {...common}>
+        <path d="M12 5a3 3 0 0 0-6 0 3 3 0 0 0-1 5.8A3 3 0 0 0 8 16a3 3 0 0 0 4 2.8V5zM12 5a3 3 0 0 1 6 0 3 3 0 0 1 1 5.8A3 3 0 0 1 16 16a3 3 0 0 1-4 2.8V5z" />
+      </svg>
+    );
+  }
+  if (kind === "digest") {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
 
 function toUIMessages(dbMessages: DbMessage[]): UIMessage[] {
   return dbMessages.map((m) => ({
@@ -33,10 +99,17 @@ export function Chat({
   conversationId,
   initialMessages,
   compact = false,
+  surface = "app",
 }: {
   conversationId: string | null;
   initialMessages: DbMessage[];
   compact?: boolean;
+  /**
+   * Which surface this is. `compact` is a layout choice; this is a capability
+   * one, and the two are kept apart so a narrow column somewhere else in the
+   * app never silently costs Mort his wiki tools.
+   */
+  surface?: ChatSurface;
 }) {
   const convIdRef = useRef<string | null>(conversationId);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -210,11 +283,12 @@ export function Chat({
     }
     sendMessage(
       { text: trimmed },
-      { body: { conversationId: convIdRef.current } },
+      { body: { conversationId: convIdRef.current, surface } },
     );
   }
 
   const showStarters = messages.length === 0 && !busy;
+  const starters = STARTER_QUESTIONS[surface];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -228,21 +302,19 @@ export function Chat({
                 Ask the AV Ops knowledge base
               </h1>
               <p className="mt-1 text-[15px] text-text-2">
-                Answers come from the crew wiki, with links to the source pages.
+                Answers come from the crew wiki, with links to the source pages. Tell him how things
+                are now and he&apos;ll remember it — with your name on it.
               </p>
               <ul className="mt-6">
-                {STARTER_QUESTIONS.map((q) => (
-                  <li key={q}>
+                {starters.map((s) => (
+                  <li key={s.text}>
                     <button
                       type="button"
-                      onClick={() => submit(q)}
-                      className="flex h-8 w-full items-center gap-2 rounded px-2 text-left text-[15px] text-text-2 transition-colors duration-100 hover:bg-canvas-2 hover:text-text"
+                      onClick={() => submit(s.text)}
+                      className="flex min-h-8 w-full items-center gap-2 rounded px-2 py-1 text-left text-[15px] text-text-2 transition-colors duration-100 hover:bg-canvas-2 hover:text-text"
                     >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-text-3">
-                        <circle cx="11" cy="11" r="8" />
-                        <path d="m21 21-4.3-4.3" />
-                      </svg>
-                      {q}
+                      <StarterIcon kind={s.kind} />
+                      {s.text}
                     </button>
                   </li>
                 ))}

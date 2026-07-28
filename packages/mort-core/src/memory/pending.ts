@@ -26,7 +26,13 @@ export type PendingTool =
   // write:world (P5). Every MCP call parks as this one tool whatever the server
   // called it, so the card, the confirm route and the executor all have a fixed
   // name whose tier they can check.
-  | "mcp_call";
+  | "mcp_call"
+  // admin (P8). Operator actions taken through a conversation, because a phone
+  // at the back of a venue is a faster console than the console. They park like
+  // everything else: an admin saying "reject that one" gets a card naming the
+  // proposal, not an immediate rejection.
+  | "decide_review"
+  | "set_mode";
 
 export const PENDING_TOOLS: PendingTool[] = [
   "save_fact",
@@ -36,7 +42,14 @@ export const PENDING_TOOLS: PendingTool[] = [
   "create_doc",
   "attach_source",
   "mcp_call",
+  "decide_review",
+  "set_mode",
 ];
+
+/** Operator cards (P8) — reachable only by an admin, on either door. */
+export function isAdminTool(tool: PendingTool): boolean {
+  return tool === "decide_review" || tool === "set_mode";
+}
 
 /** KB cards can be diverted to the admin review queue; memory cards cannot. */
 export function isKbWriteTool(tool: PendingTool): boolean {
@@ -54,6 +67,7 @@ export function isKbWriteTool(tool: PendingTool): boolean {
  */
 export function pendingToolTier(tool: PendingTool): ToolTier {
   if (tool === "mcp_call") return "write:world";
+  if (isAdminTool(tool)) return "admin";
   return isKbWriteTool(tool) ? "write:kb" : "write:memory";
 }
 

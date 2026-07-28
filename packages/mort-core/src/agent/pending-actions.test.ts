@@ -62,6 +62,52 @@ describe("confirmation previews", () => {
       "Run venue-pdu.status with no arguments",
     );
   });
+
+  it("names what a review decision is about, not just its number (P8)", () => {
+    // "#12" tells an admin nothing they can check before pressing Confirm.
+    const preview = previewFor("decide_review", {
+      reviewId: 12,
+      decision: "approve",
+      action: "CREATE",
+      title: "Main Stage patch map",
+    });
+    expect(preview).toContain("#12");
+    expect(preview).toContain("Main Stage patch map");
+    expect(preview).toContain("Approve");
+  });
+
+  it("says what a rejection does NOT do", () => {
+    const preview = previewFor("decide_review", { reviewId: 12, decision: "reject", title: "Old rack notes" });
+    expect(preview).toContain("Reject");
+    expect(preview).toContain("Nothing is written");
+  });
+
+  it("spells out the consequence of a mode change, not just the mode's name", () => {
+    // "shadow mode" means nothing to anyone who hasn't read the admin page.
+    const preview = previewFor("set_mode", { mode: "shadow", from: "live" });
+    expect(preview).toContain("shadow");
+    expect(preview).toContain("live");
+    expect(preview).toContain("review-queue proposal");
+  });
+
+  it("omits the from-clause when it would say the same thing twice", () => {
+    expect(previewFor("set_mode", { mode: "live", from: null })).not.toContain("from");
+  });
+});
+
+describe("card tiers", () => {
+  it("puts the operator cards on the admin tier, and only those", async () => {
+    // A card outlives the turn that raised it, so confirming one re-derives the
+    // tier from the stored tool name. Getting this wrong is a hole straight
+    // through the harness — the belt would refuse the tool while the confirm
+    // route waved the card through.
+    const { isAdminTool, pendingToolTier, PENDING_TOOLS } = await import("../memory/pending");
+    expect(pendingToolTier("decide_review")).toBe("admin");
+    expect(pendingToolTier("set_mode")).toBe("admin");
+    for (const tool of PENDING_TOOLS) {
+      expect(pendingToolTier(tool) === "admin").toBe(isAdminTool(tool));
+    }
+  });
 });
 
 describe("payload schemas", () => {

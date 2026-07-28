@@ -9,7 +9,7 @@ import {
   pendingToolTier,
   releasePendingAction,
 } from "../memory/pending";
-import { isTierAllowed, resolveKbWriteRoute } from "../tools/policy";
+import { isTierAllowed, isTierOnSurface, resolveKbWriteRoute } from "../tools/policy";
 import { raiseCard, type ChatToolContext, type PendingCard, type ToolFailure } from "./cards";
 import { executePendingAction, logEventPayload, previewFor, retireFactPayload, saveFactPayload } from "./pending-actions";
 
@@ -107,8 +107,20 @@ export function confirmPendingTool(ctx: ChatToolContext) {
       // the card it points at, re-checked HERE, at confirm time. That is what
       // stops it being a hole around the policy: it can never reach further
       // than the tool that raised the card was allowed to.
-      if (!isTierAllowed(pendingToolTier(action.tool), "chat", ctx.user.role)) {
+      const tier = pendingToolTier(action.tool);
+      if (!isTierAllowed(tier, "chat", ctx.user.role)) {
         return { error: "That action isn't allowed from chat." };
+      }
+      // The same re-check against the surface (P8). Without it the widget's
+      // narrowing is one word wide: a card raised in the full app, reopened in
+      // the panel, and a typed "yes" would apply a page change nobody could
+      // see — which is precisely what keeping the wiki tools off this belt was
+      // for.
+      if (!isTierOnSurface(tier, ctx.surface)) {
+        return {
+          error:
+            "That one is confirmed in the full app, where the change can actually be read. Tell them to open it from the panel's corner link — nothing was done.",
+        };
       }
 
       if (decision === "cancel") {
