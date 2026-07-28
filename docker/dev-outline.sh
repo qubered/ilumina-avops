@@ -3,11 +3,11 @@
 # secrets from dev-outline-secrets.env — do NOT regenerate them: Outline
 # encrypts stored webhook secrets and OAuth tokens with SECRET_KEY.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.."   # repo root — docker/ moved here from apps/assistant/docker/
 
 source docker/dev-outline-secrets.env
-OIDC_ID=$(grep '^OIDC_CLIENT_ID=' .env | cut -d= -f2)
-OIDC_SECRET=$(grep '^OIDC_CLIENT_SECRET=' .env | cut -d= -f2)
+OIDC_ID=$(grep '^OIDC_CLIENT_ID=' apps/assistant/.env | cut -d= -f2)
+OIDC_SECRET=$(grep '^OIDC_CLIENT_SECRET=' apps/assistant/.env | cut -d= -f2)
 
 # Stable app endpoint for Outline's server-side calls: an nginx sidecar on a
 # shared user-defined network, so Outline reaches it by container name via
