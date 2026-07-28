@@ -3,18 +3,21 @@ import {
   getMortConfig,
   getMortHealth,
   listCurrentFacts,
+  listMortLessons,
   listMortPendingActions,
   listPendingReviews,
   type MortActivity,
   type MortConfig,
   type MortFact,
   type MortHealth,
+  type MortLesson,
   type MortPendingAction,
   type MortReviewItem,
 } from "@/lib/mort-admin";
 import { MortReviewList } from "@/components/mort-review-list";
 import { MortModeSwitcher } from "@/components/mort-mode-switcher";
 import { MortFacts } from "@/components/mort-facts";
+import { MortLessons } from "@/components/mort-lessons";
 import { MortPendingActions } from "@/components/mort-pending-actions";
 import { MortHealthPanel } from "@/components/mort-health";
 import { MortActivityPanel } from "@/components/mort-activity";
@@ -31,16 +34,18 @@ export default async function AdminMortPage() {
   let health: MortHealth | null = null;
   let activity: MortActivity | null = null;
   let taught: MortPendingAction[] = [];
+  let lessons: MortLesson[] = [];
   let mcp: McpOverview | null = null;
   let error: string | null = null;
   try {
-    [config, items, facts, health, activity, taught, mcp] = await Promise.all([
+    [config, items, facts, health, activity, taught, lessons, mcp] = await Promise.all([
       getMortConfig(),
       listPendingReviews(),
       listCurrentFacts(),
       getMortHealth(),
       getMortActivity(),
       listMortPendingActions(),
+      listMortLessons(),
       getMcpOverview(),
     ]);
   } catch (e) {
@@ -68,6 +73,7 @@ export default async function AdminMortPage() {
       </section>
       {health && <MortHealthPanel health={health} />}
       {activity && <MortActivityPanel activity={activity} outlineUrl={env.OUTLINE_URL} />}
+      {!error && <MortLessons lessons={lessons} />}
       {!error && <MortFacts facts={facts} />}
       {!error && <MortPendingActions actions={taught} />}
       {!error && mcp && <MortMcpServers overview={mcp} />}

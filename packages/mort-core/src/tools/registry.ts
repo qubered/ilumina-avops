@@ -5,6 +5,7 @@ import {
   buildKbSearchTool,
   currentStateTool,
   eventLogTool,
+  mortLessonsTool,
   mortMemoryTool,
 } from "../agent/read-tools";
 import {
@@ -25,6 +26,7 @@ import {
   updatePageTool,
 } from "../agent/ingest-tools";
 import { finishDreamTool, raiseProposalTool } from "../agent/dream-tools";
+import { finishReflectionTool, noteLessonTool } from "../agent/reflect-tools";
 import { buildMcpAdminTools, buildMcpTools, mcpTools } from "../mcp";
 import { chatWritesEnabled, isTierAllowed } from "./policy";
 import { harness, type ToolContext } from "./harness";
@@ -97,13 +99,41 @@ export const TOOL_SPECS: ToolSpec[] = [
   { name: "event_log", tier: "read", build: () => eventLogTool },
   { name: "mort_memory", tier: "read", build: () => mortMemoryTool },
   { name: "current_state", tier: "read", build: () => currentStateTool },
+  // "What have you learnt lately?" (P7). On every channel: it is the reflection's
+  // own way of checking what it already holds before concluding it again.
+  { name: "mort_lessons", tier: "read", build: () => mortLessonsTool },
   { name: "list_pending", tier: "read", requiresUser: true, build: (ctx) => listPendingTool(chatCtx(ctx)) },
   { name: "confirm_pending", tier: "read", requiresUser: true, build: (ctx) => confirmPendingTool(chatCtx(ctx)) },
 
   // --- write:memory — Mort's own state, cheap to reverse, confirm-first ----
-  { name: "save_fact", tier: "write:memory", requiresUser: true, build: (ctx) => saveFactTool(chatCtx(ctx)) },
-  { name: "retire_fact", tier: "write:memory", requiresUser: true, build: (ctx) => retireFactTool(chatCtx(ctx)) },
-  { name: "log_event", tier: "write:memory", requiresUser: true, build: (ctx) => logEventTool(chatCtx(ctx)) },
+  //
+  // Narrowed to `chat` explicitly, not incidentally. The dream channel carries
+  // the write:memory tier for `note_lesson` alone (P7), and these three must be
+  // unreachable there for a reason that predates it: a fact is only
+  // authoritative because a named human approved it, and there is nobody on a
+  // machine channel to be that human. `requiresUser` would also stop them; this
+  // says so in the one place the belt is decided.
+  {
+    name: "save_fact",
+    tier: "write:memory",
+    channels: ["chat"],
+    requiresUser: true,
+    build: (ctx) => saveFactTool(chatCtx(ctx)),
+  },
+  {
+    name: "retire_fact",
+    tier: "write:memory",
+    channels: ["chat"],
+    requiresUser: true,
+    build: (ctx) => retireFactTool(chatCtx(ctx)),
+  },
+  {
+    name: "log_event",
+    tier: "write:memory",
+    channels: ["chat"],
+    requiresUser: true,
+    build: (ctx) => logEventTool(chatCtx(ctx)),
+  },
 
   // --- write:kb — Outline pages, through the mort-region safe writes -------
   {
@@ -160,8 +190,50 @@ export const TOOL_SPECS: ToolSpec[] = [
   // The whole write:kb tier the dream channel has, and it only reaches the
   // review queue. R7's rule — a dream proposes, a human decides — enforced by
   // there being nothing else on the channel to reach for.
-  { name: "raise_proposal", tier: "write:kb", channels: ["dream"], build: raiseProposalTool },
-  { name: "finish_dream", tier: "read", channels: ["dream"], build: finishDreamTool },
+  // The `enabled` predicates split the dream channel's two phases (P7). Both
+  // run on this channel, but a corpus turn has no signals and a reflection turn
+  // has no digest — so a tool from the other phase could only ever refuse
+  // itself, and a model offered a tool that always refuses will spend a step
+  // finding that out. The per-turn state on the ToolContext is set by
+  // prepareTurn from the entry, never by a tool, so this cannot be steered from
+  // inside a turn.
+  {
+    name: "raise_proposal",
+    tier: "write:kb",
+    channels: ["dream"],
+    enabled: async (ctx) => ctx.dream != null,
+    build: raiseProposalTool,
+  },
+  {
+    name: "finish_dream",
+    tier: "read",
+    channels: ["dream"],
+    enabled: async (ctx) => ctx.dream != null,
+    build: finishDreamTool,
+  },
+
+  // --- the reflection (P7) --------------------------------------------------
+  //
+  // The dream's second phase, and the only write:memory tool that exists off
+  // the chat channel. It writes ONE kind of row — a lesson about how Mort
+  // works — which is live immediately, visible in the admin panel and retirable
+  // with one click. That combination is why it needs no confirmation card: the
+  // cost of a wrong lesson is bounded by how easily a human can delete it, and
+  // there is deliberately no tool that lets Mort retire one himself.
+  {
+    name: "note_lesson",
+    tier: "write:memory",
+    channels: ["dream"],
+    enabled: async (ctx) => ctx.reflect != null,
+    build: noteLessonTool,
+  },
+  {
+    name: "finish_reflection",
+    tier: "read",
+    channels: ["dream"],
+    enabled: async (ctx) => ctx.reflect != null,
+    build: finishReflectionTool,
+  },
 
   // --- admin — the console, in chat form (P5) ------------------------------
   //

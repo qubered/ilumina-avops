@@ -266,6 +266,37 @@ Deliberately **not** in v2: online prompt self-editing, per-turn self-critique p
 auto-finetuning. The loop is: experience → nightly distillation → visible lessons →
 human-retirable. Boring, auditable, effective.
 
+**P7 landed** (`memory/lessons.ts`, `memory/signals.ts`, `agent/reflection.ts`,
+`agent/reflect-tools.ts`, `agent/lessons-prompt.ts`, on P4's harness and P6's loop).
+The reflection is the dream's **second phase**, not a rewrite of its first: a separate
+`{ kind: "reflect" }` turn on the same `dream` channel, run by the worker after the
+corpus dream and never instead of it. Different input (signals, not a digest),
+different output (lessons, not proposals), same trust model — and the two phases'
+tools are `enabled`-gated on the per-turn state, so a corpus turn is never offered
+`note_lesson` and a reflection is never offered `raise_proposal`.
+
+The dream channel gains the `write:memory` tier for `note_lesson` alone. `save_fact`,
+`retire_fact` and `log_event` are narrowed to `channels: ["chat"]` in the registry
+rather than relying on `requiresUser` to keep them off — a fact is only authoritative
+because a named human approved it, and there is nobody on a machine channel to be that
+human. A lesson is the one thing a machine turn may write unconfirmed, because it is
+the one thing a human can un-write with a single click, and there is deliberately no
+tool that lets Mort retire one himself.
+
+Three guards carry the feature. Evidence is validated against the window Mort was
+actually shown, so a lesson cannot cite a journal row that does not exist — the same
+invented-reference rule the decision path and the dream already enforce, and refused
+back to the model rather than filtered afterwards. The dedupe key spans **every**
+status, so a lesson a human retired is never re-derived as new. And the prompt section
+is capped twice, on count and on characters, because the one failure mode unique to
+this feature is a lessons list quietly eating the prompt that makes Mort work.
+
+Corrections are captured with an optional `corrects` field on the write:memory
+payloads: model-supplied (unlike attribution, which never is) because it is an
+observation about the conversation rather than a permission — it grants nothing and
+changes nothing about what the tool does, it just lands `details.corrected` on the
+journal row so the reflection can find the turns where a human said "no, you're wrong".
+
 ### I.7 Provenance model
 
 Every piece of taught knowledge answers "who, when, where":

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 
 /**
@@ -11,6 +11,10 @@ import { MockLanguageModelV4 } from "ai/test";
  */
 
 const rails = vi.hoisted(() => ({ maxSteps: 12 }));
+const lessons = vi.hoisted(() => ({
+  active: [] as Array<Record<string, unknown>>,
+  filed: [] as string[],
+}));
 
 vi.mock("../memory/config", () => ({
   getEffectiveMode: async () => "live",
@@ -25,9 +29,29 @@ vi.mock("../memory/spend", () => ({
   spendRail: () => ({ exceeded: async () => false, record: async () => {}, status: async () => ({}) }),
 }));
 // P5's belt reaches for connected servers; a turn under test has none.
-vi.mock("../mcp", () => ({ buildMcpAdminTools: () => ({}), buildMcpTools: async () => ({}), mcpTools: () => [] }));
+vi.mock("../mcp", () => ({
+  buildMcpAdminTools: () => ({}),
+  buildMcpTools: async () => ({}),
+  mcpTools: () => [],
+  isMcpTool: () => false,
+  MCP_RULES: "",
+}));
+// P7's lessons store, in memory: what the prompt reads and what a reflection
+// writes.
+vi.mock("../memory/lessons", () => ({
+  activeLessonsFor: async () => lessons.active,
+  listLessons: async () => lessons.active,
+  recordLesson: async ({ lesson }: { lesson: string }) => {
+    const created = !lessons.filed.includes(lesson);
+    if (created) lessons.filed.push(lesson);
+    return {
+      created,
+      lesson: { id: `l${lessons.filed.length}`, ts: "2026-07-27T00:00:00.000Z", lesson, scope: [], status: "active" },
+    };
+  },
+}));
 
-const { runIngestTurn, runDreamTurn } = await import("./run-turn");
+const { prepareTurn, runIngestTurn, runDreamTurn, runReflectionTurn } = await import("./run-turn");
 import type { IngestDeps, IngestFile } from "./ingest-tools";
 
 const FILE: IngestFile = {
@@ -237,5 +261,135 @@ describe("runTurn — dream", () => {
       model: scripted([{ tool: "finish_dream", args: { summary: "nothing stood out" } }]),
     });
     expect(result.raised).toHaveLength(0);
+  });
+});
+
+// --- the reflection (v2/P7) --------------------------------------------------
+
+describe("runTurn — reflect", () => {
+  const signals = {
+    days: 7,
+    journal: [
+      {
+        id: 41,
+        ts: "2026-07-24T09:00:00.000Z",
+        channel: "chat",
+        actor: "jayden@qubered.com",
+        action: "fact_saved",
+        rationale: "led-wall-height = 6m",
+        confidence: 1,
+        sourceId: null,
+        corrected: true,
+      },
+    ],
+    reviews: [
+      {
+        id: 7,
+        action: "DREAM:MISSING_PAGE",
+        status: "rejected" as const,
+        rationale: "no page covers the SDI floor runs",
+        decidedBy: "jayden@qubered.com",
+        decidedAt: "2026-07-25T09:00:00.000Z",
+      },
+    ],
+    feedback: [],
+  };
+
+  const LEARN = {
+    tool: "note_lesson",
+    args: {
+      lesson: "Read both pages before calling two of them a contradiction.",
+      detail: null,
+      scope: ["ingest"],
+      evidence: [{ kind: "review", id: "7", note: "rejected — the pages agreed" }],
+    },
+  };
+
+  beforeEach(() => {
+    lessons.active = [];
+    lessons.filed = [];
+  });
+
+  it("files what it can evidence and stops when it says it's done", async () => {
+    const result = await runReflectionTurn(
+      { signals, existing: [] },
+      { model: scripted([LEARN, { tool: "finish_reflection", args: { summary: "one pattern" } }, LEARN]) },
+    );
+
+    expect(result.learned.map((l) => l.lesson)).toEqual([LEARN.args.lesson]);
+    // Stopped ON finish_reflection: the third scripted call never ran.
+    expect(result.steps).toBe(2);
+  });
+
+  it("refuses a lesson pointing at a row it was never shown", async () => {
+    const result = await runReflectionTurn(
+      { signals, existing: [] },
+      {
+        model: scripted([
+          { ...LEARN, args: { ...LEARN.args, evidence: [{ kind: "journal", id: "918" }] } },
+          { tool: "finish_reflection", args: { summary: "nothing solid" } },
+        ]),
+      },
+    );
+    expect(result.learned).toHaveLength(0);
+  });
+
+  it("learns nothing rather than something, and that is a normal night", async () => {
+    const result = await runReflectionTurn(
+      { signals, existing: [] },
+      { model: scripted([{ tool: "finish_reflection", args: { summary: "a quiet week" } }]) },
+    );
+    expect(result.learned).toHaveLength(0);
+    expect(result.blocked).toBeNull();
+  });
+
+  it("has no reach beyond a lesson — every writing tool is off the channel", async () => {
+    // The reflection runs on the dream channel, so it inherits that channel's
+    // whole trust model and adds exactly one capability.
+    const plan = await prepareTurn(
+      { kind: "reflect", input: { signals, existing: [] } },
+      { channel: "dream", actor: "system" },
+    );
+    expect(Object.keys(plan.tools)).toContain("note_lesson");
+    for (const tool of ["save_fact", "log_event", "create_page", "update_page", "raise_proposal", "propose_doc_edit"]) {
+      expect(Object.keys(plan.tools)).not.toContain(tool);
+    }
+  });
+});
+
+describe("lessons in the prompt (P7)", () => {
+  beforeEach(() => {
+    lessons.active = [];
+  });
+
+  it("puts what Mort learnt ABOVE the rules he works under, never below", async () => {
+    // The ordering is the mechanism, not the wording: the scope and safety
+    // rules are framed as overriding and come last, so nothing distilled from
+    // last week's journal can erode them.
+    lessons.active = [
+      {
+        id: "l1",
+        ts: "2026-07-27T00:00:00.000Z",
+        lesson: "Check the event log before answering what something is set to now.",
+        detail: null,
+        scope: ["chat"],
+        evidence: [],
+        origin: "dream",
+        status: "active",
+        retiredBy: null,
+        retiredAt: null,
+      },
+    ];
+    const plan = await prepareTurn({ kind: "chat", messages: [] }, { channel: "chat", actor: "system" });
+
+    const lessonAt = plan.system.indexOf("Check the event log before answering");
+    const rulesAt = plan.system.indexOf("Scope — hard rules");
+    expect(lessonAt).toBeGreaterThan(-1);
+    expect(rulesAt).toBeGreaterThan(lessonAt);
+  });
+
+  it("leaves the prompt exactly as it was when nothing has been learnt", async () => {
+    const plan = await prepareTurn({ kind: "chat", messages: [] }, { channel: "chat", actor: "system" });
+    expect(plan.system).not.toMatch(/LESSONS/);
   });
 });
