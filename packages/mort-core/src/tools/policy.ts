@@ -71,12 +71,19 @@ const CHANNEL_POLICY: Record<Channel, Partial<Record<ToolTier, TierRule>>> = {
   // a channel with no write:world tier, and one that says "remember the LED
   // wall is at 40m" on a channel with no write:memory tier.
   ingest: { read: "any", "write:kb": "any" },
-  // Housekeeping only. P7 adds note_lesson here — as a spec-level channel
-  // narrowing on that one tool, not by opening the whole write:memory tier,
-  // which would also hand the dream save_fact. `write:kb` is on the channel
-  // for `raise_proposal` alone, narrowed the same way: the dream may put a
-  // question in front of a human, and may not answer it (P6).
-  dream: { read: "any", "write:kb": "any" },
+  // Housekeeping and self-examination. Both write tiers here are held for
+  // exactly one tool each, narrowed per spec in the registry rather than by the
+  // tier being wide:
+  //
+  //  - `write:kb` for `raise_proposal` (P6): the dream may put a question in
+  //    front of a human, and may not answer it.
+  //  - `write:memory` for `note_lesson` (P7): the reflection may write down
+  //    what it concluded about Mort's own behaviour — one row, visible, and
+  //    retirable with one click — and nothing else on that tier. save_fact,
+  //    retire_fact and log_event are narrowed to `chat` in the registry, so
+  //    they are unreachable here however the tier reads: a fact needs a named
+  //    human and there is nobody on this channel.
+  dream: { read: "any", "write:memory": "any", "write:kb": "any" },
 };
 
 export function allowedTiers(channel: Channel): ToolTier[] {

@@ -55,18 +55,20 @@ describe("channel/role tier policy", () => {
     // tier admits is narrowed per spec in the registry; see registry.test.ts.
     for (const tier of ["write:memory", "write:world", "admin"] as const) {
       expect(isTierAllowed(tier, "ingest", "admin")).toBe(false);
-      expect(isTierAllowed(tier, "dream", "admin")).toBe(false);
     }
     expect(isTierAllowed("read", "ingest")).toBe(true);
     expect(isTierAllowed("write:kb", "ingest")).toBe(true);
   });
 
-  it("lets the dream propose and nothing more", () => {
+  it("lets the dream propose and reflect, and nothing more", () => {
     // R7's rule: every question a dream asks is a judgement call about what the
     // KB should be, which is the user's call. It holds write:kb for the review
-    // queue alone — raise_proposal is the only tool the registry puts there.
-    expect(allowedTiers("dream").sort()).toEqual(["read", "write:kb"]);
-    for (const tier of ["write:memory", "write:world", "admin"] as const) {
+    // queue alone — raise_proposal is the only tool the registry puts there —
+    // and, as of P7, write:memory for note_lesson alone. Both tiers are wide
+    // here and narrowed per tool in the registry; see registry.test.ts for the
+    // half that matters, which is that save_fact is still unreachable.
+    expect(allowedTiers("dream").sort()).toEqual(["read", "write:kb", "write:memory"]);
+    for (const tier of ["write:world", "admin"] as const) {
       expect(isTierAllowed(tier, "dream", "admin")).toBe(false);
     }
   });

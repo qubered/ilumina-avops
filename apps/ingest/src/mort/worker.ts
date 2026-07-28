@@ -3,7 +3,9 @@ import { extract } from "../extract.js";
 import { getSelfUserId } from "@mort/core/kb/outline";
 import { classifyRole } from "./classify.js";
 import { getEffectiveMode, getEffectiveThreshold, getIngestEngine } from "@mort/core/memory/config";
-import { runDreamTurn } from "@mort/core/agent/run-turn";
+import { runDreamTurn, runReflectionTurn } from "@mort/core/agent/run-turn";
+import { listLessons } from "@mort/core/memory/lessons";
+import { collectReflectionSignals, worthReflectingOn } from "@mort/core/memory/signals";
 import { runMortAgentTurn } from "./agent-turn.js";
 import { buildTurnDeps } from "./deps.js";
 import { syncEventSheet } from "./events.js";
@@ -169,16 +171,24 @@ async function recheckUnfiled(): Promise<number> {
 }
 
 /**
- * Step back and look at the whole corpus (R7). Two halves:
+ * Step back and look at the whole corpus (R7), then at his own record (v2/P7).
+ * Three halves, which is one more than a half allows, but they are:
  *
- *  1. Re-check what's still homeless — the cheap, mechanical half (no model).
+ *  1. Re-check what's still homeless — the cheap, mechanical one (no model).
  *  2. Ask what only the whole corpus can answer — what's missing, what
  *     contradicts, what should merge. Proposals only; see agent/dream-tools.ts.
+ *  3. Reflect: where was I wrong last week, and what pattern explains it.
+ *     Lessons only; see agent/reflect-tools.ts.
  *
  * Exported so the admin route can trigger one on demand rather than waiting for
  * the interval.
  */
-export async function runDream(): Promise<{ raised: number; skipped: number; rechecked: number } | null> {
+export async function runDream(): Promise<{
+  raised: number;
+  skipped: number;
+  rechecked: number;
+  learned: number;
+} | null> {
   const mode = await getEffectiveMode();
   if (mode === "off") return null;
   if (await dreamSpend.exceeded()) {
@@ -192,7 +202,7 @@ export async function runDream(): Promise<{ raised: number; skipped: number; rec
   const rechecked = await recheckUnfiled();
 
   const [library, docs] = await Promise.all([libraryDigest(), docDigest()]);
-  if (!library.length) return { raised: 0, skipped: 0, rechecked };
+  if (!library.length) return { raised: 0, skipped: 0, rechecked, learned: 0 };
 
   // A dream is a turn now (v2/P6): same loop, same harness, same journal — it
   // just gets the read tools and the review queue instead of the pen, so it can
@@ -211,7 +221,67 @@ export async function runDream(): Promise<{ raised: number; skipped: number; rec
   console.log(
     `[mort] dreamt over ${library.length} file(s) and ${docs.length} page(s) — ${raised.length} new proposal(s), ${duplicates} already known`,
   );
-  return { raised: raised.length, skipped: duplicates, rechecked };
+
+  const learned = await runReflection();
+  return { raised: raised.length, skipped: duplicates, rechecked, learned };
+}
+
+/**
+ * The reflection phase (v2/P7): read the last week of what Mort did and how it
+ * landed, and write down what to do differently.
+ *
+ * Runs after the corpus dream and never instead of it — a failure here must not
+ * cost the night's proposals. The cap is re-checked between the two because the
+ * corpus turn has just spent against it, and a reflection is the more
+ * expendable of the two: proposals are about the KB the crew actually use.
+ */
+async function runReflection(): Promise<number> {
+  try {
+    if (await dreamSpend.exceeded()) {
+      console.warn("[mort] daily token cap reached during the dream — skipping the reflection");
+      return 0;
+    }
+
+    const signals = await collectReflectionSignals(env.MORT_REFLECT_DAYS);
+    if (!worthReflectingOn(signals)) {
+      console.log(
+        `[mort] nothing to reflect on — ${signals.journal.length} decision(s), no graded proposals, feedback or corrections in the last ${signals.days} day(s)`,
+      );
+      return 0;
+    }
+
+    // Handed the active lessons as DATA so it dedupes against them. They are
+    // deliberately NOT in its system prompt: a turn whose job is to judge its
+    // own conclusions should not be reading them back as instructions.
+    //
+    // Every active lesson, not the ones scoped to this channel: the reflection
+    // is deciding whether it already holds a thought, and a chat-scoped lesson
+    // it can't see is one it will conclude again tonight.
+    const existing = await listLessons({ status: "active", limit: 60 }).catch(() => []);
+    const { learned, duplicates, tokens, steps } = await runReflectionTurn({ signals, existing });
+
+    await appendJournal({
+      action: "reflect",
+      rationale:
+        `looked over ${signals.days} day(s): ${signals.journal.length} decision(s), ${signals.reviews.length} graded ` +
+        `proposal(s), ${signals.feedback.length} rating(s) — learnt ${learned.length} over ${steps} step(s), ` +
+        `${duplicates} already known`,
+      tokens,
+      model: env.INGEST_AI_PROVIDER,
+      channel: "dream",
+      // The lessons themselves live in mort_lessons; the journal records that a
+      // reflection happened and what came out of it, so the activity panel can
+      // show it alongside everything else Mort did.
+      details: { learned: learned.map((l) => l.lesson) },
+    });
+    for (const l of learned) console.log(`[mort] learnt: ${l.lesson}`);
+    return learned.length;
+  } catch (err) {
+    // Never let the reflection take the dream down with it: the proposals are
+    // already raised and the lessons can wait for tomorrow night.
+    console.error("[mort] reflection failed:", err);
+    return 0;
+  }
 }
 
 async function processJob(job: MortJob, d: TurnDeps): Promise<void> {

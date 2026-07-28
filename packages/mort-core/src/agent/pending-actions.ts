@@ -46,12 +46,32 @@ const isoDate = z
 
 const tags = z.array(z.string().min(1)).max(12).optional();
 
+/**
+ * "This is fixing something I got wrong" (P7, MORT_V2_PLAN I.6).
+ *
+ * A correction is the fourth reflection signal and the only one that wasn't
+ * already being captured somewhere: the journal recorded that a fact was saved,
+ * never that it was saved because a human had just told Mort he was wrong.
+ * Optional and model-supplied — unlike attribution, which never is — because it
+ * is an OBSERVATION about the conversation rather than a permission. It grants
+ * nothing, changes nothing about what the write does, and its worst failure
+ * mode is a reflection reading a routine update as a correction.
+ */
+const corrects = z
+  .string()
+  .max(300)
+  .nullish()
+  .describe(
+    "Set ONLY when the user is correcting something you said or held ('no, that's wrong, it's actually X'): what you had told them, in a few words. Leave unset when they are simply telling you something new.",
+  );
+
 export const saveFactPayload = z.object({
   factKey: z.string().min(1).max(120),
   value: z.string().min(1).max(500),
   scope: z.string().max(120).nullish(),
   effectiveFrom: isoDate.nullish(),
   note: z.string().max(1000).nullish(),
+  corrects,
 });
 
 export const retireFactPayload = z.object({
@@ -59,6 +79,7 @@ export const retireFactPayload = z.object({
   /** Snapshot of what is being retired, so the card reads the same tomorrow. */
   factKey: z.string().nullish(),
   value: z.string().nullish(),
+  corrects,
 });
 
 export const logEventPayload = z.object({
@@ -68,6 +89,7 @@ export const logEventPayload = z.object({
   zone: tags,
   system: tags,
   entities: tags,
+  corrects,
 });
 
 /**
@@ -195,6 +217,18 @@ export function previewFor(tool: PendingTool, payload: Record<string, unknown>, 
   }
 }
 
+/**
+ * The `corrected` journal tag (P7).
+ *
+ * Undefined — not `{ corrected: false }` — when nothing was corrected, so the
+ * `details` column stays null on the ordinary rows and
+ * `details->>'corrected'` reads as a flag rather than a census.
+ */
+function correctionDetails(corrects: string | null | undefined): { corrected: true; corrects: string } | undefined {
+  const what = corrects?.trim();
+  return what ? { corrected: true, corrects: what } : undefined;
+}
+
 export type ExecutionResult = {
   /** One line for the conversation and the journal — what actually happened. */
   summary: string;
@@ -280,6 +314,9 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         channel: "chat",
         actor: by,
         conversationId: action.conversationId,
+        // Was this fixing something Mort had got wrong? The reflection's
+        // sharpest signal (P7) — a human contradicting him to his face.
+        details: correctionDetails(p.corrects),
       });
       return { summary, factId, supersededFactId: superseded?.id ?? null };
     }
@@ -300,6 +337,7 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         channel: "chat",
         actor: by,
         conversationId: action.conversationId,
+        details: correctionDetails(p.corrects),
       });
       return { summary, factId: p.factId };
     }
@@ -342,6 +380,7 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         channel: "chat",
         actor: by,
         conversationId: action.conversationId,
+        details: correctionDetails(p.corrects),
       });
       return { summary, sourceId, rowHash: row.rowHash };
     }

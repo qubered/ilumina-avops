@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { eventProvenance, factHistory, listCurrentFacts, searchMemory, type MortFact } from "../memory";
+import { listLessons } from "../memory/lessons";
 import { describeProvenance, eventChipFrom, factChip, type ProvenanceChip } from "../memory/provenance";
 import { embedQuery } from "../kb/embeddings";
 import { searchEvents } from "../kb/events-store";
@@ -237,10 +238,61 @@ export const currentStateTool = tool({
   },
 });
 
+/**
+ * "What have you learnt lately?" (P7).
+ *
+ * The visibility half of the reflection loop. Lessons change how Mort behaves,
+ * so a crew member has to be able to ask what they are and see the evidence
+ * behind each one — a prompt nobody can read is exactly the silent
+ * self-modification MORT_V2_PLAN I.6 rules out.
+ *
+ * Returns retired lessons too when asked for: "you used to do X, what changed?"
+ * is a fair question and the answer is in the same table.
+ */
+export const mortLessonsTool = tool({
+  description:
+    "List the lessons Mort has drawn from his own record — what he decided to do differently, based on rejected " +
+    "proposals, crew feedback and corrections. Use for 'what have you learned lately', 'why do you do it that way " +
+    "now', 'have you changed how you handle X'. Each lesson carries the evidence rows behind it and when it was " +
+    "filed. These are Mort's OWN working notes, not venue facts — use kb_search or current_state for those.",
+  inputSchema: z.object({
+    includeRetired: z
+      .boolean()
+      .optional()
+      .describe("Also return lessons a human has retired. Use when asked what changed or what was dropped."),
+  }),
+  execute: async ({ includeRetired }): Promise<Record<string, unknown>> => {
+    try {
+      const rows = await listLessons({ status: includeRetired ? undefined : "active", limit: 40 });
+      if (rows.length === 0) {
+        return { note: "Nothing learnt yet — no lessons on file. Say so plainly rather than inventing one." };
+      }
+      return {
+        lessons: rows.map((l) => ({
+          lesson: l.lesson,
+          detail: l.detail,
+          scope: l.scope,
+          learnedOn: l.ts.slice(0, 10),
+          status: l.status,
+          ...(l.status === "retired" ? { retiredBy: l.retiredBy, retiredOn: l.retiredAt?.slice(0, 10) ?? null } : {}),
+          // The evidence is what makes a lesson answerable rather than
+          // assertable — "because two of my page proposals got rejected for
+          // that reason", with the rows to back it.
+          basedOn: l.evidence.map((e) => `${e.kind} ${e.id}${e.note ? ` — ${e.note}` : ""}`),
+        })),
+      };
+    } catch (err) {
+      console.error("[mort_lessons] failed:", err);
+      return { error: "Can't reach the lessons store right now — say so rather than guessing what you've learnt." };
+    }
+  },
+});
+
 /** The read-only belt — safe on any channel, no acting user required. */
 export const agentTools = {
   kb_search: kbSearchTool,
   event_log: eventLogTool,
   mort_memory: mortMemoryTool,
   current_state: currentStateTool,
+  mort_lessons: mortLessonsTool,
 };

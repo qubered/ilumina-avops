@@ -41,6 +41,12 @@ const schema = z
     // Daily by default: a dream costs one model call over a digest of the
     // library, and the corpus doesn't change shape faster than that.
     MORT_DREAM_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
+    // How far back the dream's reflection phase looks when asking where it went
+    // wrong (v2/P7). A week, because that is roughly the span over which the
+    // same mistake made three times reads as a pattern rather than as three
+    // unrelated bad days — and short enough that a lesson learnt from it is
+    // still about how Mort works now.
+    MORT_REFLECT_DAYS: z.coerce.number().min(1).max(90).default(7),
   })
   .superRefine((env, ctx) => {
     const need = (cond: boolean, path: string, message: string) => {
