@@ -46,6 +46,12 @@ export type PendingStatus = "pending" | "confirmed" | "cancelled" | "expired";
 export type PendingAction = {
   id: string;
   conversationId: string | null;
+  /**
+   * The message that prompted this card — the one where the user actually said
+   * the thing (P2). It becomes the fact's `message_id`, which is what lets an
+   * answer link back to the moment Mort learnt it.
+   */
+  messageId: string | null;
   userId: string;
   tool: PendingTool;
   payload: Record<string, unknown>;
@@ -57,7 +63,7 @@ export type PendingAction = {
   result: Record<string, unknown> | null;
 };
 
-const COLS = `id, conversation_id, user_id, tool, payload, preview, status, created_at, decided_at, decided_by, result`;
+const COLS = `id, conversation_id, message_id, user_id, tool, payload, preview, status, created_at, decided_at, decided_by, result`;
 
 const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v));
 
@@ -65,6 +71,7 @@ function mapRow(r: Record<string, unknown>): PendingAction {
   return {
     id: r.id as string,
     conversationId: (r.conversation_id as string) ?? null,
+    messageId: (r.message_id as string) ?? null,
     userId: r.user_id as string,
     tool: r.tool as PendingTool,
     payload: (r.payload as Record<string, unknown>) ?? {},
@@ -105,15 +112,24 @@ export async function countPendingActionsToday(userId: string): Promise<number> 
 
 export async function createPendingAction(input: {
   conversationId: string | null;
+  messageId?: string | null;
   userId: string;
   tool: PendingTool;
   payload: Record<string, unknown>;
   preview: string;
 }): Promise<PendingAction> {
   const { rows } = await pool.query(
-    `INSERT INTO mort_pending_actions (id, conversation_id, user_id, tool, payload, preview)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${COLS}`,
-    [randomUUID(), input.conversationId, input.userId, input.tool, JSON.stringify(input.payload), input.preview],
+    `INSERT INTO mort_pending_actions (id, conversation_id, message_id, user_id, tool, payload, preview)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${COLS}`,
+    [
+      randomUUID(),
+      input.conversationId,
+      input.messageId ?? null,
+      input.userId,
+      input.tool,
+      JSON.stringify(input.payload),
+      input.preview,
+    ],
   );
   return mapRow(rows[0]);
 }

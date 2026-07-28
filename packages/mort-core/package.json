@@ -10,6 +10,7 @@
     "./model/ingest": "./src/model/ingest.ts",
     "./memory": "./src/memory/index.ts",
     "./memory/types": "./src/memory/types.ts",
+    "./memory/provenance": "./src/memory/provenance.ts",
     "./memory/db": "./src/memory/db.ts",
     "./memory/schema": "./src/memory/schema.ts",
     "./memory/config": "./src/memory/config.ts",

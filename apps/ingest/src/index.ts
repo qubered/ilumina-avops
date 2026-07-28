@@ -225,6 +225,9 @@ app.post("/ingest/delete", async (c) => {
       sourceId,
       action: "tombstone_proposed",
       rationale: queued ? "queued for review" : "already queued",
+      // The watcher told us, not a person: the file's disappearance is the
+      // whole story, and there is no signed-in human behind this request.
+      channel: "ingest",
     });
     return c.json({ action: "tombstoned", review: true, queued, knownRole: src?.role ?? null }, 202);
   } catch (err) {

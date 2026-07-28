@@ -14,6 +14,12 @@ import type { ActingUser } from "./pending-actions";
 /** Everything a write tool needs that the model must not be able to supply. */
 export type ChatToolContext = {
   conversationId: string | null;
+  /**
+   * The user message this turn is answering (P2). A fact taught here is
+   * attributed to the message that said it, so an answer citing the fact can
+   * link straight back to the moment — see `MessageProvenance` in the app.
+   */
+  messageId?: string | null;
   /** From the session. The reason a fact can carry a human's name at all. */
   user: ActingUser;
   /**
@@ -68,6 +74,7 @@ export async function raiseCard(
     }
     const action = await createPendingAction({
       conversationId: ctx.conversationId,
+      messageId: ctx.messageId ?? null,
       userId: ctx.user.id,
       tool,
       payload,

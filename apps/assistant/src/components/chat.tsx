@@ -22,6 +22,7 @@ function toUIMessages(dbMessages: DbMessage[]): UIMessage[] {
     parts: [{ type: "text" as const, text: m.content }],
     metadata: {
       sources: m.sources ?? [],
+      provenance: m.provenance ?? [],
       pendingActions: m.pendingActions ?? [],
       persisted: true,
     },
@@ -116,9 +117,37 @@ export function Chat({
 
   const busy = status === "submitted" || status === "streaming";
 
+  // Deep link from a provenance chip: /c/<id>#m-<messageId> opens the
+  // conversation AT the message that taught the fact, rather than at the
+  // bottom where the newest chatter is. Read once, on mount — after that the
+  // usual stick-to-bottom behaviour resumes.
+  const [deepLinkId, setDeepLinkId] = useState<string | null>(() =>
+    typeof window !== "undefined" && window.location.hash.startsWith("#m-")
+      ? window.location.hash.slice(3)
+      : null,
+  );
+  const deepLinkPending = useRef(deepLinkId !== null);
+
+  // Declared before the deep-link effect on purpose: effects run in order, so
+  // this one has to see `pending` still set and stand down before the other
+  // scrolls to the anchor — otherwise it lands at the bottom regardless.
   useEffect(() => {
+    if (deepLinkPending.current) return;
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, status]);
+
+  useEffect(() => {
+    if (!deepLinkPending.current || !deepLinkId) return;
+    deepLinkPending.current = false;
+    // A stale link (deleted message, wrong conversation) highlights nothing
+    // and falls back to the usual stick-to-bottom behaviour.
+    const target = document.getElementById(`m-${deepLinkId}`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center" });
+    // The ring is a "here it is" flash, not a permanent state.
+    const t = setTimeout(() => setDeepLinkId(null), 2600);
+    return () => clearTimeout(t);
+  }, [deepLinkId]);
 
   // A conversation can be mid-answer with no local stream attached — the
   // user sent a prompt, closed the tab or switched conversations, and came
@@ -222,7 +251,12 @@ export function Chat({
           ) : (
             <div className="space-y-7">
               {messages.map((message) => (
-                <MessageItem key={message.id} message={message} compact={compact} />
+                <MessageItem
+                  key={message.id}
+                  message={message}
+                  compact={compact}
+                  highlighted={message.id === deepLinkId}
+                />
               ))}
               {(status === "submitted" || awaitingAnswer) && (
                 <p className="soft-pulse text-sm text-text-3">

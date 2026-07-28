@@ -232,6 +232,12 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         approvedBy: by,
         confidence: "approved",
         note: p.note ?? null,
+        // Provenance (P2), all of it from the row and the session — never the
+        // payload. This is what makes "Jayden told me, 23 July, in chat"
+        // answerable later, with a link to the message that said it.
+        taughtVia: "chat",
+        conversationId: action.conversationId,
+        messageId: action.messageId,
       });
 
       const scope = p.scope ? ` (${p.scope})` : "";
@@ -241,8 +247,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
 
       await appendJournal({
         action: "fact_saved",
-        rationale: `${p.factKey} = ${p.value} (chat, told by ${by}${superseded ? `, supersedes #${superseded.id}` : ""})`,
+        rationale: `${p.factKey} = ${p.value} (told by ${by}${superseded ? `, supersedes #${superseded.id}` : ""})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, factId, supersededFactId: superseded?.id ?? null };
     }
@@ -258,8 +267,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         : `${label} was already retired — nothing to do.`;
       await appendJournal({
         action: "fact_retired",
-        rationale: `${label} (chat, retired by ${by})`,
+        rationale: `${label} (retired by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, factId: p.factId };
     }
@@ -281,11 +293,15 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
       };
 
       const before = await getEventHashes(sourceId);
-      await insertEvent(sourceId, row);
+      // Who reported it, and where — the event-log half of P2 provenance.
+      await insertEvent(sourceId, row, { reportedBy: by, conversationId: action.conversationId });
       const known = before.includes(row.rowHash);
       // Pass every hash this source now has: prune reconciles the collection
       // rather than dropping the rows logged earlier in the conversation.
-      await indexEvents(sourceId, known ? [] : [row], known ? before : [...before, row.rowHash]);
+      await indexEvents(sourceId, known ? [] : [row], known ? before : [...before, row.rowHash], {
+        reportedBy: by,
+        conversationId: action.conversationId,
+      });
 
       const summary = known
         ? `Already in the event log: ${p.actionText} (${occurredOn}).`
@@ -293,8 +309,11 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
       await appendJournal({
         sourceId,
         action: "event_logged",
-        rationale: `${p.actionText} on ${occurredOn} (chat, reported by ${by})`,
+        rationale: `${p.actionText} on ${occurredOn} (reported by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary, sourceId, rowHash: row.rowHash };
     }
@@ -318,6 +337,9 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         action: "doc_updated",
         rationale: `${p.rationale ?? "corrected from chat"} (chat, confirmed by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return {
         summary: result.changed
@@ -340,7 +362,15 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
       // whose semantic identity already exists is additively updated instead of
       // duplicated — the same rule ingestion follows, and the reason chat and
       // ingest keep ONE registry rather than two.
-      const docId = await buildWriteDeps(await selfUserId()).createDoc({
+      // Provenance matters here as well as in the journal entry below:
+      // buildWriteDeps journals its own writes, and defaulting to the ingest
+      // channel would file a page written in conversation as if a file had
+      // arrived (P2).
+      const docId = await buildWriteDeps(await selfUserId(), {
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
+      }).createDoc({
         title: p.title,
         collection: p.collection ?? null,
         regionBody: p.regionBody,
@@ -352,13 +382,20 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         action: "doc_created",
         rationale: `${p.rationale ?? "written from chat"} (chat, confirmed by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return { summary: `Created “${p.title}” in the wiki. Confirmed by ${by}.`, docId, sourceId };
     }
 
     case "attach_source": {
       const p = attachSourcePayload.parse(action.payload);
-      const deps = buildWriteDeps(await selfUserId());
+      const deps = buildWriteDeps(await selfUserId(), {
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
+      });
       if (!deps.attachFile) throw new Error("attach executor unavailable");
       await deps.attachFile(p.targetDocId, p.sourceId);
       await appendJournal({
@@ -367,6 +404,9 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         action: "doc_attached",
         rationale: `${p.rationale ?? "attached from chat"} (chat, confirmed by ${by})`,
         confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
       });
       return {
         summary: `Attached ${p.sourceId} to “${p.title ?? p.targetDocId}”. Confirmed by ${by}.`,

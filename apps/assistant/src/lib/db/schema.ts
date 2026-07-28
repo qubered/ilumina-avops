@@ -10,6 +10,7 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
+import type { ProvenanceChip } from "@mort/core/memory/provenance";
 
 // Better Auth owns users/sessions/accounts + OIDC provider tables.
 export * from "./auth-schema";
@@ -33,6 +34,14 @@ export type PendingCardRef = {
   docUrl?: string;
   warnings?: string[];
 };
+
+/**
+ * Where a taught thing an answer leaned on came from (v2 P2). Stored on the
+ * message so the chip survives a reload and keeps pointing at the same
+ * conversation/message even after the fact is later superseded — the answer
+ * cited what was true when it was written.
+ */
+export type MessageProvenance = ProvenanceChip;
 
 export const conversations = pgTable(
   "conversations",
@@ -68,6 +77,8 @@ export const messages = pgTable(
     content: text("content").notNull(),
     sources: jsonb("sources").$type<Source[]>(),
     pendingActions: jsonb("pending_actions").$type<PendingCardRef[]>(),
+    // Taught knowledge the answer leaned on, with who taught it and when.
+    provenance: jsonb("provenance").$type<MessageProvenance[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

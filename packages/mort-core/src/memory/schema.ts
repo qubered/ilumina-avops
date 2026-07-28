@@ -67,9 +67,18 @@ export async function ensureMortSchema(): Promise<void> {
       model      text,
       tokens     integer,
       cost_usd   numeric(10,4),
-      conflicts  jsonb
+      conflicts  jsonb,
+      -- Provenance (v2 P2): WHO caused this entry and through WHICH door.
+      -- actor is a user id/email or the literal 'system'; it is stamped from
+      -- the session or the job, NEVER from anything a model produced.
+      actor           text NOT NULL DEFAULT 'system',
+      channel         text NOT NULL DEFAULT 'ingest',   -- chat | ingest | dream | admin
+      conversation_id text
     );
     ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS outline_document_id text;
+    ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS actor           text NOT NULL DEFAULT 'system';
+    ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS channel         text NOT NULL DEFAULT 'ingest';
+    ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS conversation_id text;
 
     -- Per-doc write state: curated-doc detection + revision CAS.
     CREATE TABLE IF NOT EXISTS mort_doc_state (
@@ -154,8 +163,15 @@ export async function ensureMortSchema(): Promise<void> {
       entities     text[] NOT NULL DEFAULT '{}',
       action_text  text NOT NULL,
       ingested_at  timestamptz NOT NULL DEFAULT now(),
+      -- Provenance (v2 P2). Sheet-ingested rows have no reporter — the file
+      -- named by source_id IS the provenance. Chat-reported rows carry the
+      -- person who reported them and the conversation it was said in.
+      reported_by     text,
+      conversation_id text,
       UNIQUE (source_id, row_hash)
     );
+    ALTER TABLE mort_events ADD COLUMN IF NOT EXISTS reported_by     text;
+    ALTER TABLE mort_events ADD COLUMN IF NOT EXISTS conversation_id text;
 
     -- Current-state facts (R1 slice 3). The ONLY thing that may override a
     -- documented KB procedure as "what is true now" — and only because a human
@@ -172,8 +188,17 @@ export async function ensureMortSchema(): Promise<void> {
       confidence     text,
       supersedes     bigint,
       note           text,
-      created_at     timestamptz NOT NULL DEFAULT now()
+      created_at     timestamptz NOT NULL DEFAULT now(),
+      -- Provenance (v2 P2): which door the fact came through, and — for a fact
+      -- taught in conversation — exactly which message said it, so an answer
+      -- can deep-link to the moment it was learnt.
+      taught_via      text NOT NULL DEFAULT 'admin',   -- chat | admin | ingest
+      conversation_id text,
+      message_id      text
     );
+    ALTER TABLE mort_facts ADD COLUMN IF NOT EXISTS taught_via      text NOT NULL DEFAULT 'admin';
+    ALTER TABLE mort_facts ADD COLUMN IF NOT EXISTS conversation_id text;
+    ALTER TABLE mort_facts ADD COLUMN IF NOT EXISTS message_id      text;
 
     -- Confirm-then-live queue (v2 P1). A write tool NEVER writes: it parks the
     -- payload here with the preview the user was shown, and the write happens
@@ -183,6 +208,9 @@ export async function ensureMortSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS mort_pending_actions (
       id              uuid PRIMARY KEY,
       conversation_id uuid,
+      -- The message that prompted the card (P2): what the fact's provenance
+      -- points at, so an answer can link back to where it was said.
+      message_id      uuid,
       user_id         text NOT NULL,          -- who Mort was talking to
       tool            text NOT NULL,          -- save_fact | retire_fact | log_event
       payload         jsonb NOT NULL,
@@ -193,6 +221,7 @@ export async function ensureMortSchema(): Promise<void> {
       decided_by      text,                   -- session-derived, never model-supplied
       result          jsonb                   -- what the executor did, for the audit trail
     );
+    ALTER TABLE mort_pending_actions ADD COLUMN IF NOT EXISTS message_id uuid;
     CREATE INDEX IF NOT EXISTS mort_pending_open ON mort_pending_actions (created_at) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_pending_by_convo ON mort_pending_actions (conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS mort_pending_by_user ON mort_pending_actions (user_id, created_at);
@@ -201,12 +230,16 @@ export async function ensureMortSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);
     CREATE INDEX IF NOT EXISTS mort_events_date ON mort_events (occurred_on);
     CREATE INDEX IF NOT EXISTS mort_facts_key ON mort_facts (fact_key);
+    -- Walking a supersession chain ("what was it before?") reads by both ends.
+    CREATE INDEX IF NOT EXISTS mort_facts_supersedes ON mort_facts (supersedes) WHERE supersedes IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS mort_journal_conversation ON mort_journal (conversation_id) WHERE conversation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS mort_review_pending ON mort_review_queue (status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_journal_source ON mort_journal (source_id);
   `);
 
   await backfillSemanticRegistryKeys();
   await backfillJournalOutlineIds();
+  await backfillJournalProvenance();
 }
 
 /**
@@ -263,5 +296,42 @@ async function backfillJournalOutlineIds(): Promise<void> {
     if (rowCount) console.log(`[mort] migrated ${rowCount} journal row(s) from mort_id to outline_document_id`);
   } catch (err) {
     console.warn("[mort] journal outline-id backfill skipped:", err);
+  }
+}
+
+/**
+ * v2 P2 migration: give historical journal rows the provenance they were
+ * written without. The new columns default to `system`/`ingest`, which is
+ * right for the vast majority of v1 rows (the ingest worker was the only
+ * writer) but wrong for the two kinds that came through a human:
+ *
+ * - `dream` rows are the nightly reflection, not an ingest turn.
+ * - `fact_approved` and `approved:*` rows were an admin clicking a button.
+ *   For `approved:*` the actual approver is recoverable: the row's rationale
+ *   is `review <id>` and `mort_review_queue.decided_by` holds the name.
+ *
+ * Rows we cannot attribute keep actor 'system' rather than being given a
+ * guessed name — an unknown actor is a truthful answer to "who did this?",
+ * an invented one is not. Idempotent: each statement only touches rows still
+ * carrying the default.
+ */
+async function backfillJournalProvenance(): Promise<void> {
+  try {
+    await pool.query(`UPDATE mort_journal SET channel = 'dream' WHERE action = 'dream' AND channel = 'ingest'`);
+    await pool.query(
+      `UPDATE mort_journal SET channel = 'admin'
+        WHERE channel = 'ingest' AND (action = 'fact_approved' OR action LIKE 'approved:%')`,
+    );
+    const { rowCount } = await pool.query(
+      `UPDATE mort_journal j SET actor = q.decided_by
+         FROM mort_review_queue q
+        WHERE j.actor = 'system'
+          AND j.action LIKE 'approved:%'
+          AND j.rationale = 'review ' || q.id::text
+          AND q.decided_by IS NOT NULL`,
+    );
+    if (rowCount) console.log(`[mort] attributed ${rowCount} historical journal row(s) to their approver`);
+  } catch (err) {
+    console.warn("[mort] journal provenance backfill skipped:", err);
   }
 }

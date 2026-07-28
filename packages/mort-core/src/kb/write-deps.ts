@@ -25,6 +25,7 @@ import {
   getSourceRelations,
   recordDocState,
   registryKey,
+  type JournalChannel,
 } from "../memory";
 import { appendToFilesSection, extractMortRegion, spliceMortRegion } from "./region";
 import { metaField, slugify } from "./textutil";
@@ -154,8 +155,24 @@ async function createOrUpdateDoc(
   return created.id;
 }
 
+/**
+ * Who is behind the writes these deps perform (P2). The same executor runs for
+ * an autonomous ingest turn and for an admin approving a proposal in the
+ * console, and the journal has to be able to tell those apart afterwards — so
+ * the caller states it here rather than the executor guessing.
+ */
+export type WriteProvenance = {
+  channel: JournalChannel;
+  /** A user id/email, or omitted for a machine-initiated turn ('system'). */
+  actor?: string | null;
+  conversationId?: string | null;
+};
+
 /** Assembles the real write-only Mort dependencies from the concrete modules. */
-export function buildWriteDeps(selfUserId: string | null): WriteDeps {
+export function buildWriteDeps(
+  selfUserId: string | null,
+  provenance: WriteProvenance = { channel: "ingest" },
+): WriteDeps {
   return {
     updateRegion: async (docId, regionBody) => {
       await writeMortRegion(docId, regionBody, selfUserId);
@@ -217,6 +234,9 @@ export function buildWriteDeps(selfUserId: string | null): WriteDeps {
         confidence: e.confidence,
         tokens: e.tokens,
         model: env.INGEST_AI_PROVIDER,
+        channel: provenance.channel,
+        actor: provenance.actor ?? null,
+        conversationId: provenance.conversationId ?? null,
       }),
   };
 }

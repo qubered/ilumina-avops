@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { conversations, db, messages, type PendingCardRef, type Source } from "@/lib/db";
+import { collectProvenance } from "@/lib/provenance";
 import {
   buildAgentTools,
   buildSystemPrompt,
@@ -183,12 +184,13 @@ export async function POST(req: Request) {
     { role: "user", content: userText },
   ];
 
-  // Persist the user message up front so history survives a dropped stream.
-  await db.insert(messages).values({
-    conversationId,
-    role: "user",
-    content: userText,
-  });
+  // Persist the user message up front so history survives a dropped stream —
+  // and keep its id: a fact taught in this turn is attributed to THIS message,
+  // which is what a provenance chip links back to (P2).
+  const [userMessage] = await db
+    .insert(messages)
+    .values({ conversationId, role: "user", content: userText })
+    .returning({ id: messages.id });
 
   // The tool belt is built per turn and closed over THIS session's user, so
   // nothing said in the conversation can change who a write is attributed to.
@@ -199,6 +201,9 @@ export async function POST(req: Request) {
   const canWriteKb = await chatCanWriteKb();
   const turnTools = await buildAgentTools({
     conversationId,
+    // A fact taught this turn is attributed to THIS message, which is what a
+    // provenance chip links back to (P2).
+    messageId: userMessage?.id ?? null,
     user: actingUserFromSession(session),
     seen: new Set<string>(),
     onWritten: (docId) => syncDocumentById(docId),
@@ -209,17 +214,22 @@ export async function POST(req: Request) {
       model: stack.model,
       ...systemPromptOptions(await buildSystemPrompt({ canWriteKb })),
       messages: modelMessages,
+      // The tools are bound to this session user and this conversation (see
+      // buildAgentTools): the model chooses what to propose, never who it is
+      // proposed as.
       tools: { ...turnTools, ...stack.providerTools },
       stopWhen: stepCountIs(MAX_STEPS),
       onFinish: async ({ text, steps }) => {
         const sources = collectSources(steps, text);
         const pendingCards = collectPendingCards(steps);
+        const provenance = collectProvenance(steps, text);
         await db.insert(messages).values({
           conversationId,
           role: "assistant",
           content: text,
           sources,
           pendingActions: pendingCards.length > 0 ? pendingCards : null,
+          provenance,
         });
         await db
           .update(conversations)
