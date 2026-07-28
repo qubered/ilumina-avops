@@ -14,6 +14,8 @@ import {
   upsertSource,
 } from "../memory";
 import { recordPendingResult, type PendingAction, type PendingTool } from "../memory/pending";
+import { callMcpTool } from "../mcp/manager";
+import { hashArgs } from "../tools/audit";
 import type { ActorRole } from "../tools/policy";
 
 /**
@@ -95,6 +97,22 @@ export const attachSourcePayload = z.object({
   rationale: z.string().max(1000).nullish(),
 });
 
+/**
+ * write:world payload (P5). The server and tool are recorded as the registry
+ * knows them, not as the model spelled them: the belt resolves the namespaced
+ * name it offered back to the real pair before parking the card, so what the
+ * user confirms is what gets called.
+ */
+export const mcpCallPayload = z.object({
+  server: z.string().min(1),
+  tool: z.string().min(1),
+  args: z.record(z.string(), z.unknown()).default({}),
+  /** What the tool says it does — shown on the card, since the crew won't know. */
+  toolDescription: z.string().nullish(),
+  /** Its definition changed since an admin reviewed the server. */
+  drifted: z.boolean().nullish(),
+});
+
 export const PAYLOAD_SCHEMAS = {
   save_fact: saveFactPayload,
   retire_fact: retireFactPayload,
@@ -102,6 +120,7 @@ export const PAYLOAD_SCHEMAS = {
   apply_doc_edit: applyDocEditPayload,
   create_doc: createDocPayload,
   attach_source: attachSourcePayload,
+  mcp_call: mcpCallPayload,
 } satisfies Record<PendingTool, z.ZodType>;
 
 export type SaveFactPayload = z.infer<typeof saveFactPayload>;
@@ -110,6 +129,7 @@ export type LogEventPayload = z.infer<typeof logEventPayload>;
 export type ApplyDocEditPayload = z.infer<typeof applyDocEditPayload>;
 export type CreateDocPayload = z.infer<typeof createDocPayload>;
 export type AttachSourcePayload = z.infer<typeof attachSourcePayload>;
+export type McpCallPayload = z.infer<typeof mcpCallPayload>;
 
 /** Today, as an ISO date, in the venue's local reckoning. */
 export function today(): string {
@@ -163,6 +183,14 @@ export function previewFor(tool: PendingTool, payload: Record<string, unknown>, 
     case "attach_source": {
       const p = payload as AttachSourcePayload;
       return `Attach ${p.sourceId} to “${p.title ?? p.targetDocId}”`;
+    }
+    // The only preview that names something outside Mort's systems, so it says
+    // the arguments in full rather than summarising: whoever presses Confirm is
+    // authorising an action on real equipment and has to see what it will do.
+    case "mcp_call": {
+      const p = payload as McpCallPayload;
+      const args = Object.keys(p.args ?? {}).length ? ` with ${JSON.stringify(p.args)}` : " with no arguments";
+      return `Run ${p.server}.${p.tool}${args}`;
     }
   }
 }
@@ -412,6 +440,47 @@ async function runTool(action: PendingAction, actor: ActingUser, by: string): Pr
         summary: `Attached ${p.sourceId} to “${p.title ?? p.targetDocId}”. Confirmed by ${by}.`,
         docId: p.targetDocId,
         sourceId: p.sourceId,
+      };
+    }
+
+    // --- write:world (P5) -------------------------------------------------
+    //
+    // The one executor that reaches outside Mort's own systems. Note what it
+    // does NOT do on a failure: throw. A KB write that fails should hand its
+    // card back to `pending` so the user can try again, but an MCP call may
+    // well have happened before the error — retrying it is not obviously safe,
+    // and a card that reads as untouched would invite exactly that. So the
+    // attempt is recorded, the failure is reported, and the card stays decided.
+    case "mcp_call": {
+      const p = mcpCallPayload.parse(action.payload);
+      const started = Date.now();
+      const result = await callMcpTool(p.server, p.tool, p.args ?? {});
+      const latencyMs = Date.now() - started;
+
+      await appendJournal({
+        action: "mcp_call",
+        rationale: `${p.server}.${p.tool} ${result.ok ? "ok" : "failed"} (confirmed by ${by}, ${latencyMs}ms)`,
+        confidence: 1,
+        channel: "chat",
+        actor: by,
+        conversationId: action.conversationId,
+        // The arguments themselves stay on the pending row the user confirmed;
+        // the journal keeps a digest so "was this the same call as last time?"
+        // is answerable without the audit trail accumulating door codes.
+        details: {
+          server: p.server,
+          tool: p.tool,
+          argsHash: hashArgs(p.args ?? {}),
+          outcome: result.ok ? "ok" : "error",
+          latencyMs,
+        },
+      });
+
+      const label = `${p.server}.${p.tool}`;
+      return {
+        summary: result.ok
+          ? `Ran ${label} — ${result.text || "no output"}. Confirmed by ${by}.`
+          : `${label} failed: ${result.text} Nothing else was attempted.`,
       };
     }
   }

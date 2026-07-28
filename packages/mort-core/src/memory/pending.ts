@@ -21,7 +21,11 @@ export type PendingTool =
   // the tool proposes, the card applies.
   | "apply_doc_edit"
   | "create_doc"
-  | "attach_source";
+  | "attach_source"
+  // write:world (P5). Every MCP call parks as this one tool whatever the server
+  // called it, so the card, the confirm route and the executor all have a fixed
+  // name whose tier they can check.
+  | "mcp_call";
 
 export const PENDING_TOOLS: PendingTool[] = [
   "save_fact",
@@ -30,6 +34,7 @@ export const PENDING_TOOLS: PendingTool[] = [
   "apply_doc_edit",
   "create_doc",
   "attach_source",
+  "mcp_call",
 ];
 
 /** KB cards can be diverted to the admin review queue; memory cards cannot. */

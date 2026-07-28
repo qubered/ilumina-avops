@@ -73,9 +73,15 @@ export async function ensureMortSchema(): Promise<void> {
       -- the session or the job, NEVER from anything a model produced.
       actor           text NOT NULL DEFAULT 'system',
       channel         text NOT NULL DEFAULT 'ingest',   -- chat | ingest | dream | admin
-      conversation_id text
+      conversation_id text,
+      -- Structured audit detail for entries whose interesting parts don't fit
+      -- the fixed columns (v2 P5): an MCP call's server, tool, args hash,
+      -- outcome and latency. Deliberately open-ended — the tool harness (P4)
+      -- fills the same slot for native tools.
+      details         jsonb
     );
     ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS outline_document_id text;
+    ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS details jsonb;
     ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS actor           text NOT NULL DEFAULT 'system';
     ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS channel         text NOT NULL DEFAULT 'ingest';
     ALTER TABLE mort_journal ADD COLUMN IF NOT EXISTS conversation_id text;
@@ -225,6 +231,35 @@ export async function ensureMortSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS mort_pending_open ON mort_pending_actions (created_at) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS mort_pending_by_convo ON mort_pending_actions (conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS mort_pending_by_user ON mort_pending_actions (user_id, created_at);
+
+    -- Registered MCP servers (v2 P5). Config, not code: a lighting console or
+    -- PDU that speaks MCP becomes a row here and its tools join Mort's belt.
+    --
+    -- Two things about this table carry the whole safety story. enabled
+    -- defaults to FALSE, so registering a server arms nothing until an admin
+    -- says so. default_tier defaults to 'write:world', the tier that means
+    -- "per-call confirmation card, admin only" — a server's tools are treated
+    -- as capable of anything until an admin decides otherwise for a NAMED
+    -- tool via tool_overrides.
+    --
+    -- Secrets never live in config as literals: an env/header value written as
+    -- env:VAR_NAME is resolved from the process environment at connect time
+    -- (see mcp/config.ts), so this row stays safe to read in the admin UI.
+    CREATE TABLE IF NOT EXISTS mort_mcp_servers (
+      name           text PRIMARY KEY,
+      transport      text NOT NULL,                          -- stdio | sse | streamable-http
+      config         jsonb NOT NULL DEFAULT '{}'::jsonb,     -- url/headers or command/args/env
+      enabled        boolean NOT NULL DEFAULT false,
+      default_tier   text NOT NULL DEFAULT 'write:world',
+      tool_overrides jsonb NOT NULL DEFAULT '{}'::jsonb,     -- { "<tool>": {"tier":"read","enabled":false} }
+      -- Baseline digests of the tool definitions an admin last saw, so a server
+      -- that quietly rewrites a tool's description or schema ("rug pull") shows
+      -- up as drift instead of silently steering the model.
+      fingerprints   jsonb NOT NULL DEFAULT '{}'::jsonb,
+      description    text,
+      created_at     timestamptz NOT NULL DEFAULT now(),
+      updated_at     timestamptz NOT NULL DEFAULT now()
+    );
 
     CREATE INDEX IF NOT EXISTS mort_rel_by_doc ON mort_source_doc_relations (mort_id);
     CREATE INDEX IF NOT EXISTS mort_events_source ON mort_events (source_id);

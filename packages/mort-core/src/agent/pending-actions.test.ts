@@ -49,6 +49,19 @@ describe("confirmation previews", () => {
     expect(preview).toContain("2026-07-27");
     expect(preview).toContain("Bump-in");
   });
+
+  it("spells out an equipment call in full — server, tool and every argument", () => {
+    // The one preview that authorises something outside Mort's systems, so it
+    // summarises nothing: whoever presses Confirm is acting on real gear.
+    const preview = previewFor("mcp_call", { server: "venue-pdu", tool: "power_cycle", args: { outlet: 3 } });
+    expect(preview).toBe('Run venue-pdu.power_cycle with {"outlet":3}');
+  });
+
+  it("says so plainly when an equipment call takes no arguments", () => {
+    expect(previewFor("mcp_call", { server: "venue-pdu", tool: "status", args: {} })).toBe(
+      "Run venue-pdu.status with no arguments",
+    );
+  });
 });
 
 describe("payload schemas", () => {

@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, type ModelMessage, type UIMessage } from "ai";
+import { stepCountIs, streamText, type ModelMessage, type ToolSet, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -9,6 +9,7 @@ import {
   buildAgentTools,
   buildSystemPrompt,
   chatCanWriteKb,
+  chatHasMcpTools,
   getChatStack,
   MAX_STEPS,
   systemPromptOptions,
@@ -199,7 +200,7 @@ export async function POST(req: Request) {
   // assistant's own re-index: core owns Outline and Qdrant, the assistant owns
   // kb_documents, so the hook crosses that line explicitly.
   const canWriteKb = await chatCanWriteKb();
-  const turnTools = await buildAgentTools({
+  const turnTools: ToolSet = await buildAgentTools({
     conversationId,
     // A fact taught this turn is attributed to THIS message, which is what a
     // provenance chip links back to (P2).
@@ -212,7 +213,12 @@ export async function POST(req: Request) {
   try {
     const result = streamText({
       model: stack.model,
-      ...systemPromptOptions(await buildSystemPrompt({ canWriteKb })),
+      // hasMcpTools is asked of the belt that was actually built, not of the
+      // config: an admin whose only enabled server is unreachable gets no MCP
+      // tools this turn, so the prompt must not describe any.
+      ...systemPromptOptions(
+        await buildSystemPrompt({ canWriteKb, hasMcpTools: chatHasMcpTools(turnTools) }),
+      ),
       messages: modelMessages,
       // The tools are bound to this session user and this conversation (see
       // buildAgentTools): the model chooses what to propose, never who it is

@@ -18,6 +18,8 @@ import { MortFacts } from "@/components/mort-facts";
 import { MortPendingActions } from "@/components/mort-pending-actions";
 import { MortHealthPanel } from "@/components/mort-health";
 import { MortActivityPanel } from "@/components/mort-activity";
+import { MortMcpServers } from "@/components/mort-mcp-servers";
+import { getMcpOverview, type McpOverview } from "@/lib/mort-mcp";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -29,15 +31,17 @@ export default async function AdminMortPage() {
   let health: MortHealth | null = null;
   let activity: MortActivity | null = null;
   let taught: MortPendingAction[] = [];
+  let mcp: McpOverview | null = null;
   let error: string | null = null;
   try {
-    [config, items, facts, health, activity, taught] = await Promise.all([
+    [config, items, facts, health, activity, taught, mcp] = await Promise.all([
       getMortConfig(),
       listPendingReviews(),
       listCurrentFacts(),
       getMortHealth(),
       getMortActivity(),
       listMortPendingActions(),
+      getMcpOverview(),
     ]);
   } catch (e) {
     error = e instanceof Error ? e.message : "unreachable";
@@ -66,6 +70,7 @@ export default async function AdminMortPage() {
       {activity && <MortActivityPanel activity={activity} outlineUrl={env.OUTLINE_URL} />}
       {!error && <MortFacts facts={facts} />}
       {!error && <MortPendingActions actions={taught} />}
+      {!error && mcp && <MortMcpServers overview={mcp} />}
     </div>
   );
 }

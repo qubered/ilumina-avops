@@ -20,6 +20,12 @@ export async function register() {
   const { ensureOidcClientRow } = await import("./lib/db/seed-oidc-client");
   await ensureOidcClientRow();
 
+  // Connect any MCP server an admin has enabled (P5). Best-effort: a console
+  // that's off for the night must not stop the assistant booting, and the
+  // manager reconciles again at the start of every chat turn anyway.
+  const { syncMcpConnections } = await import("@mort/core/mcp");
+  await syncMcpConnections().catch((err) => console.error("[mcp] initial connect failed:", err));
+
   const { startCron } = await import("./lib/cron");
   startCron();
 }

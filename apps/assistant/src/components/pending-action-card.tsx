@@ -43,7 +43,16 @@ const TITLES: Record<string, string> = {
   apply_doc_edit: "Correct this page?",
   create_doc: "Write this page?",
   attach_source: "Attach this file?",
+  mcp_call: "Run this on the gear?",
 };
+
+/**
+ * A card that reaches real equipment (P5). Nothing about the flow differs —
+ * the tool proposed, a human confirms — but the phrasing does: "nothing is
+ * saved until you confirm" is the wrong promise when what's on the other end
+ * is a contactor.
+ */
+const WORLD_TOOLS = new Set(["mcp_call"]);
 
 /** A wiki change can be handed to an admin instead of applied (P3). */
 const KB_TOOLS = new Set(["apply_doc_edit", "create_doc", "attach_source"]);
@@ -80,6 +89,7 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
 
   const fields = EDITABLE[card.tool] ?? [];
   const isKbChange = KB_TOOLS.has(card.tool);
+  const reachesWorld = WORLD_TOOLS.has(card.tool);
 
   async function decide(decision: "confirm" | "cancel" | "review") {
     setBusy(true);
@@ -230,7 +240,11 @@ export function PendingActionCard({ card, compact = false }: { card: ChatCard; c
           Cancel
         </button>
         <span className="ml-auto text-[11px] text-text-3">
-          {isKbChange ? "The wiki is unchanged until you confirm" : "Nothing is saved until you confirm"}
+          {reachesWorld
+            ? "This runs on connected equipment when you confirm"
+            : isKbChange
+              ? "The wiki is unchanged until you confirm"
+              : "Nothing is saved until you confirm"}
         </span>
       </div>
       {error && <p className="mt-1.5 text-[12px] text-danger">{error}</p>}

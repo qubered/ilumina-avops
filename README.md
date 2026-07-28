@@ -6,7 +6,7 @@ This is a pnpm workspace — run `pnpm install` once at the repo root, not insid
 
 - **[apps/assistant/](apps/assistant/)** — the chat app (Next.js 16, AI SDK, Better Auth, Qdrant, Drizzle). Full docs, setup, and deploy instructions in its [README](apps/assistant/README.md).
 - **[apps/ingest/](apps/ingest/)** — SharePoint → Outline ingestion service. Power Automate POSTs base64 files; Mort decides how the KB should change. See its [README](apps/ingest/README.md).
-- **[packages/mort-core/](packages/mort-core/)** — the shared brain both apps import directly (identity, model selection, memory/KB stores, the Outline client, the agent loop) — no HTTP boundary between them.
+- **[packages/mort-core/](packages/mort-core/)** — the shared brain both apps import directly (identity, model selection, memory/KB stores, the Outline client, the agent loop, and the MCP client harness that plugs external gear onto the same tool belt) — no HTTP boundary between them.
 - **[watcher/](watcher/)** — the Python watcher that runs on the OneDrive machine and POSTs file changes to `apps/ingest`.
 - **[docker/](docker/)** — the full Docker Compose stack (Outline + assistant + ingest + Postgres + Redis + Qdrant + Ollama + nginx + cloudflared).
 - **[sample_kb/](sample_kb/)** — three demo KB docs used to seed/demo without a live wiki.

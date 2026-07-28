@@ -67,6 +67,10 @@ export async function guardDecision(
     const route = await resolveKbWriteRoute(actingUserFromSession(session));
     if (route.route !== "apply") return fail(403, route.reason);
   }
+  // Note what is NOT re-checked here: an `mcp_call` card's role and master
+  // switch. That check belongs to the confirm route alone (see below), because
+  // this guard also fronts cancel — and a switch whose whole job is to stop
+  // things happening must never be the reason someone can't call something off.
 
   // The card names a conversation; make sure it's still this user's.
   if (action.conversationId) {
