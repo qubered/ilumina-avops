@@ -16,8 +16,9 @@ Two tiers. **Tier 1** (app + chat + vector KB) works on any OS with Docker.
 
 ```bash
 git clone https://github.com/qubered/ilumina-avops
-cd ilumina-avops/avops-assistant
-pnpm install
+cd ilumina-avops
+pnpm install          # installs the whole pnpm workspace
+cd apps/assistant
 ```
 
 ### 2. Databases
@@ -96,7 +97,7 @@ docker run -d --name avops-dev-redis --restart unless-stopped -p 6379:6379 redis
 
 # Outline's encryption secrets — generate ONCE per machine and never rotate:
 # SECRET_KEY encrypts rows in Outline's DB; rotating it bricks the instance.
-cat > docker/dev-outline-secrets.env <<EOF
+cat > ../../docker/dev-outline-secrets.env <<EOF
 SECRET_KEY=$(openssl rand -hex 32)
 UTILS_SECRET=$(openssl rand -hex 32)
 EOF
@@ -105,7 +106,7 @@ EOF
 ### 7. Start Outline
 
 ```bash
-./docker/dev-outline.sh
+../../docker/dev-outline.sh    # run from apps/assistant/, or cd to the repo root first
 ```
 
 This starts Outline at `https://avops-dev-outline.orb.local` plus an
@@ -124,8 +125,8 @@ Node doesn't read the macOS keychain, so export OrbStack's local CA for the
 app's HTTPS calls to Outline, and start dev with it:
 
 ```bash
-security find-certificate -c "OrbStack Development Root CA" -p > docker/orbstack-root-ca.pem
-NODE_EXTRA_CA_CERTS=$PWD/docker/orbstack-root-ca.pem pnpm dev -p 3100
+security find-certificate -c "OrbStack Development Root CA" -p > ../../docker/orbstack-root-ca.pem
+NODE_EXTRA_CA_CERTS=$PWD/../../docker/orbstack-root-ca.pem pnpm dev -p 3100
 ```
 
 ### 8. Wire the two apps together

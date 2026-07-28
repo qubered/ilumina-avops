@@ -6,8 +6,10 @@ into a clean Outline article (routed into the best-fitting collection, with
 images and the original file attached), and publishes it. The assistant's
 Outline webhook then indexes it into the RAG search automatically.
 
-Part of the `ilumina-avops` compose stack — see the assistant's README for the
-full deployment.
+Part of the `ilumina-avops` pnpm workspace and compose stack — see the root
+[README](../../README.md) and the assistant's for the full deployment. Shares
+its brain (identity, model selection, KB store, Outline client) with the
+assistant via `packages/mort-core` — no HTTP boundary between the two apps.
 
 ## Endpoint
 

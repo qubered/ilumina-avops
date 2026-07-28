@@ -7,24 +7,27 @@ AI assistant for the ILUMINA venue AV crew (Harry The Hirer Productions). Answer
 - **KB sync** — full sync from Outline's API (published, non-template, non-archived docs only), instant re-index via HMAC-verified webhooks, nightly 04:00 Australia/Sydney cron backstop.
 - **Admin** — sync status, per-doc errors, re-sync button, feedback review, KB-gap candidates.
 - **Widget** — `widget.js` injects a chat bubble into Outline via nginx `sub_filter`; the panel iframes `/widget` (CSP `frame-ancestors`, cross-subdomain cookies).
-- **SharePoint ingestion** — a separate `ingest` service (see [`../ingest`](../ingest)) takes base64 files from a Power Automate flow, AI-normalises each into a KB article with attachments, and publishes into Outline (indexed automatically via the webhook).
+- **SharePoint ingestion** — a separate `ingest` service (see [`../ingest`](../ingest)) takes base64 files from a Power Automate flow, AI-normalises each into a KB article with attachments, and publishes into Outline (indexed automatically via the webhook). Both apps share one brain, `packages/mort-core` — no HTTP boundary between them.
 
 ## Stack
 
-Next.js 16 (App Router, TypeScript, Turbopack) · Vercel AI SDK v7 + `@ai-sdk/anthropic` (`claude-sonnet-5`) · local Ollama embeddings (`nomic-embed-text` default; Voyage API optional) · Qdrant · Postgres + Drizzle ORM · Better Auth (+ OIDC provider plugin) · Tailwind CSS v4 · Vitest · Docker.
+Next.js 16 (App Router, TypeScript, Turbopack) · Vercel AI SDK v7 + `@ai-sdk/anthropic` (`claude-sonnet-5`) · local Ollama embeddings (`nomic-embed-text` default; Voyage API optional) · Qdrant · Postgres + Drizzle ORM · Better Auth (+ OIDC provider plugin) · Tailwind CSS v4 · Vitest · Docker · pnpm workspace.
 
 ## Repository layout
 
+This app is one package in a pnpm workspace rooted one level up — `pnpm install` runs at the repo root, not here.
+
 ```
-avops-assistant/          this app
-  src/lib/rag/            chunker, embeddings, Qdrant store, sync, agent
-  src/lib/outline.ts      Outline POST-RPC API client
-  src/lib/auth.ts         Better Auth config (incl. OIDC provider for Outline)
-  src/proxy.ts            CSP frame-ancestors for /widget (Next 16 "proxy", ex-middleware)
-  scripts/seed.ts         seed Qdrant from ../sample_kb
-  docker/                 nginx.conf + postgres init script
-  drizzle/                SQL migrations (applied automatically at boot)
-../sample_kb/             three demo KB docs (repo root)
+apps/assistant/            this app
+  src/lib/auth.ts           Better Auth config (incl. OIDC provider for Outline)
+  src/proxy.ts               CSP frame-ancestors for /widget (Next 16 "proxy", ex-middleware)
+  scripts/seed.ts             seed Qdrant from ../../sample_kb
+  drizzle/                     SQL migrations (applied automatically at boot)
+../../packages/mort-core/  shared: identity, model selection, chunker/embeddings/Qdrant
+                            store, Outline client, agent loop, memory stores — imported
+                            directly by this app AND apps/ingest, no HTTP between them
+../../docker/               compose stack, nginx.conf template, postgres init script
+../../sample_kb/            three demo KB docs
 ```
 
 ## Local development
@@ -32,11 +35,12 @@ avops-assistant/          this app
 > Setting up on a fresh machine? Follow **[DEV_SETUP.md](DEV_SETUP.md)** — the step-by-step including the optional local Outline + SSO environment.
 
 ```bash
-cd avops-assistant
+cd ilumina-avops                   # repo root
+pnpm install                       # installs the whole workspace
+cd apps/assistant
 cp .env.example .env               # fill it in (see below)
 docker run -d -p 5432:5432 -e POSTGRES_USER=avops -e POSTGRES_PASSWORD=avops -e POSTGRES_DB=avops postgres:16
 docker run -d -p 6333:6333 qdrant/qdrant
-pnpm install
 pnpm dev                           # migrations run automatically at boot
 ```
 
@@ -51,7 +55,7 @@ pnpm db:generate                   # regenerate migrations after schema changes
 
 ## Production (docker-compose + Cloudflare Tunnel)
 
-`docker-compose.yml` runs the full stack: `outline-postgres` (one instance, two databases via init script), `outline-redis`, `outline`, `qdrant`, `assistant` (this app), `nginx` (widget-injection layer for Outline only), and `cloudflared` (public access).
+`docker/docker-compose.yml` (repo root) runs the full stack: `outline-postgres` (one instance, two databases via init script), `outline-redis`, `outline`, `ollama`, `qdrant`, `assistant` (this app), `ingest`, `nginx` (widget-injection layer for Outline only), and `cloudflared` (public access). Both Dockerfiles build from the repo root (pnpm workspace context) — see `docker/docker-compose.yml`'s `build:` blocks.
 
 Public access is via a **Cloudflare Tunnel** — outbound-only, no ports exposed on the box, TLS terminated at Cloudflare's edge:
 
@@ -60,10 +64,11 @@ Public access is via a **Cloudflare Tunnel** — outbound-only, no ports exposed
    - `kb.venue.example` → `http://nginx:80` (Outline, with the widget script injected)
    - `assistant.venue.example` → `http://assistant:3000`
 
-The widget-injection nginx renders its config from `docker/nginx.conf.template`
+The widget-injection nginx renders its config from `../../docker/nginx.conf.template`
 at startup, filling the script URL from `APP_URL` — nothing to hand-edit.
 
 ```bash
+cd docker                          # repo root docker/
 cp .env.example .env               # fill everything in
 docker compose up -d --build
 ```
@@ -95,7 +100,7 @@ Better Auth's OIDC provider plugin exposes standard endpoints under `/api/auth/o
 
 ### Widget injection into Outline
 
-The `nginx` service ([`docker/nginx.conf.template`](docker/nginx.conf.template)) proxies Outline and rewrites every HTML response to load the embed script (`${APP_URL}` filled in at startup):
+The `nginx` service ([`../../docker/nginx.conf.template`](../../docker/nginx.conf.template)) proxies Outline and rewrites every HTML response to load the embed script (`${APP_URL}` filled in at startup):
 
 ```nginx
 sub_filter '</body>' '<script src="${APP_URL}/widget.js" defer></script></body>';
@@ -110,7 +115,7 @@ proxy_hide_header Content-Security-Policy; # Outline's CSP would block the cross
 
 ## AI providers — including Codex (ChatGPT subscription) auth
 
-`AI_PROVIDER` selects the chat backend (`src/lib/rag/model.ts`, pattern taken from `qubered/health-tracker`):
+`AI_PROVIDER` selects the chat backend (`packages/mort-core/src/model/chat.ts`, pattern taken from `qubered/health-tracker`):
 
 | Value | What it uses | Needs |
 |---|---|---|
@@ -136,7 +141,7 @@ Caveats for codex mode: it's the **unofficial ChatGPT backend** — outside Open
 3. **Retrieval** — Voyage embeddings (`input_type` document/query), cosine search in the `ilumina_kb` Qdrant collection, top 5.
 4. **Agent** — `streamText` with a `kb_search` tool and up to 6 steps; the system prompt (brief §7, verbatim) forbids answering outside the KB and requires a Sources list. Sources are collected from the tool results actually used, deduped, persisted with the message, and rendered as chips.
 
-The agent definition (`src/lib/rag/agent.ts`) is plain server-side code with no HTTP coupling, so a later Slack bot can import it directly.
+The agent definition (`packages/mort-core/src/agent/index.ts`) is plain server-side code with no HTTP coupling, so a later Slack bot can import it directly.
 
 ## Decisions & deviations (boring-option notes)
 
@@ -148,4 +153,4 @@ The agent definition (`src/lib/rag/agent.ts`) is plain server-side code with no 
 - **Migrations at boot**: the container applies Drizzle migrations in `instrumentation.ts` (no separate migration runner); env is zod-validated there too, so a misconfigured container fails fast with a readable error.
 - **Feedback ids**: streamed messages swap to their DB-persisted form (real ids + canonical sources) via a refetch when the stream finishes; thumbs appear then.
 - **"Unanswered questions"** on the admin page is a heuristic (assistant replies containing "does not cover" etc.) plus the thumbs-down list — good enough for KB-gap review in v1.
-- **Sync locking** is a per-process flag (single container). If you scale out, move it to a DB lock.
+- **Sync locking** is a Postgres advisory lock (`packages/mort-core/src/kb/sync-lock.ts`), so it's correct across multiple replicas, not just one process.

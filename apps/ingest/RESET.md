@@ -27,7 +27,7 @@ Run the steps in order. All of it is destructive and none of it is reversible.
 Dry-run first. It changes nothing and prints every page and row it would destroy:
 
 ```bash
-cd avops-assistant
+cd docker
 docker compose exec ingest npx tsx scripts/reset-mort.ts
 ```
 
@@ -80,12 +80,15 @@ you set it.
 
 Start in **shadow** and read the proposals before letting him write:
 
-Use the mode switcher on `/admin/mort` — the ingest service publishes no host
-port, so there's nothing to curl from the host. (`localhost:3001` is the
-*assistant*.) If you'd rather do it from a shell:
+Use the mode switcher on `/admin/mort` — the admin UI sets the mode directly
+(no HTTP call to the ingest service; `mort_settings` is shared Postgres). If
+you'd rather do it from a shell, write the setting straight into Postgres —
+same table (`mort_settings`) the admin UI and `getEffectiveMode()` both read:
 
 ```bash
-docker compose exec ingest node -e "fetch('http://localhost:'+process.env.PORT+'/mort/config',{method:'POST',headers:{Authorization:'Bearer '+process.env.INGEST_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({mode:'shadow'})}).then(r=>r.text()).then(console.log)"
+docker compose exec outline-postgres psql -U avops -d avops -c \
+  "INSERT INTO mort_settings (key, value) VALUES ('mode', 'shadow')
+   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"
 ```
 
 Then restart the watcher. It finds an empty manifest, treats every file as new,
